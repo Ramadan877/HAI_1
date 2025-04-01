@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Chat with AI</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #1e293b ; 
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            overflow: hidden;
+        }
+        h2{
+            color: white;
+        }
+
+        .avatar-container {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            width: 150px;
+            height: 150px;
+            cursor: pointer;
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+
+        .avatar-container:hover {
+            transform: scale(1.1);
+        }
+        
+        /* Siri Sphere Animation Styles */
+        .siri-orb {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: radial-gradient(circle at center, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.1) 60%, rgba(255,255,255,0) 70%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: transform 0.3s ease;
+        }
+        
+        .blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(10px);
+            opacity: 0.7;
+            mix-blend-mode: screen;
+            transform-origin: center;
+            transition: all 0.5s ease;
+        }
+        
+        .blob1 {
+            width: 75px;
+            height: 75px;
+            background-color: #00e5ff;
+            left: calc(50% - 37.5px);
+            top: calc(50% - 50px);
+        }
+        
+        .blob2 {
+            width: 80px;
+            height: 80px;
+            background-color: #ff3366;
+            left: calc(50% - 40px);
+            top: calc(50% - 20px);
+        }
+        
+        .blob3 {
+            width: 70px;
+            height: 70px;
+            background-color: #7c4dff;
+            left: calc(50% - 20px);
+            top: calc(50% - 35px);
+        }
+        
+        .wave {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: transparent;
+            border: 2px solid rgba(0, 0, 0, 0.5);
+            transform: scale(0);
+            opacity: 1;
+            pointer-events: none;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            width: 100%;
+        }
+        h1 {
+            color: #4fd1c5;
+            font-style: oblique;
+            margin: 0;
+            padding: 10px;
+            text-align: center;
+            height: 20px;
+            margin-bottom: 10px;
+        }
+        p{
+            color: #e5e7eb;
+            position: inherit;
+            font-style: italic;
+            margin: 0px;
+        }
+
+        .resource {
+            flex-grow: 1; 
+            overflow: auto;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%; 
+            border: none;
+        }
+
+        .resource {
+            width: 100%;
+            height: 100vh;
+            overflow: auto;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: transparent;
+            justify-content: flex-end;
+            align-items: flex-end;
+            padding-bottom: 250px; 
+            padding-right: 250px; 
+        }
+
+        .modal-content {
+            position: relative;
+            right:150px; 
+            bottom: 150px; 
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 20px;
+            max-width: 300px;
+            max-height: 60vh;
+            width: 90%;
+            border-radius: 20px 20px 0 20px; /* Top-left and top-right rounded, bottom-right and bottom-left sharp */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            pointer-events: auto;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            animation: pop-up 0.3s ease-out;
+            z-index: 999;
+        }
+
+        .modal-content::after {
+            content: '';
+            position: absolute;
+            bottom: 40px; 
+            right: -20px; 
+            width: 0;
+            height: 0;
+            border-left: 20px solid #1e293b;
+            border-top: 15px solid transparent;
+            border-bottom: 15px solid transparent;
+            transform: rotate(0deg);
+            z-index: 1000;
+        }
+
+        @media (max-width: 768px) {
+            .modal-content {
+                right: 180px;
+                bottom: 80px;
+                width: 80%;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .modal-content {
+                right: 160px;
+                bottom: 60px;
+                width: 70%;
+            }
+        }
+
+        @keyframes pop-up {
+            0% {
+                transform: scale(0.5) translateY(100px);
+                opacity: 0;
+            }
+            100% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal.show::before {
+            opacity: 1;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            height: 20px;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 20px;
+            cursor: pointer;
+            color: #fff;
+            background-color: #888;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            z-index: 1;
+        }
+
+        .close-btn:hover {
+            background-color: #e74c3c; 
+            box-shadow: 0 0 10px rgba(231, 76, 60, 0.5);
+            transform: scale(1.2);
+        }
+
+        .close-btn:active {
+            background-color: #c0392b; 
+            box-shadow: none;
+            transform: scale(1);
+        }
+
+        .chat-container {
+            max-height: 60vh;
+            overflow-y: auto;
+            background: transparent;
+            padding: 15px;
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            scroll-behavior: smooth;
+        }
+
+        .chat-message {
+            display: flex;
+            align-items: center;
+            max-width: 75%;
+            padding: 10px 15px;
+            border-radius: 18px;
+            font-size: 14px;
+            position: relative;
+            word-wrap: break-word;
+        }
+
+        .modal {
+            transition: opacity 0.3s ease;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .modal.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        
+        @media (max-width: 768px) {
+            .modal-content {
+                right: 180px;
+                bottom: 80px;
+                width: 80%;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .modal-content {
+                right: 160px;
+                bottom: 60px;
+                width: 70%;
+            }
+        }
+        
+        .user-message {
+            background-color: #4fd1c5;
+            color: #1e293b;
+            align-self: flex-end;
+            border-top-right-radius: 18px;
+            border-bottom-right-radius: 5px;
+        }
+
+        .ai-message {
+            background-color: #4fd1c5;
+            color: #1e293b;
+            align-self: flex-start;
+            border-top-left-radius: 18px;
+            border-bottom-left-radius: 5px;
+        }
+        .audio-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #f0f0f0;
+            border-radius: 18px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+            width: 100%;
+        }
+
+        .play-button {
+            width: 36px;
+            height: 36px;
+            min-width: 36px;
+            border-radius: 50%;
+            background-color: #4fd1c5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .play-button:hover {
+            background-color: #38b2ac;
+        }
+
+        .play-button:active {
+            transform: scale(0.95);
+        }
+
+        .waveform {
+            height: 26px;
+            flex-grow: 0;
+            width: 3px;
+            background-color: #4fd1c5;
+            opacity: 0.7;
+            border-radius: 3px;
+            margin: 0 5px;
+        }
+
+        .progress-container {
+            flex-grow: 1;
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 4px;
+            background: #d1d1d1;
+            border-radius: 2px;
+            position: relative;
+            cursor: pointer;
+            overflow: visible;
+        }
+
+        .progress {
+            height: 100%;
+            background: #4fd1c5;
+            border-radius: 2px;
+            width: 0%;
+            position: relative;
+        }
+
+        .progress-thumb {
+            width: 12px;
+            height: 12px;
+            background-color: #4fd1c5;
+            border-radius: 50%;
+            position: absolute;
+            right: -6px;
+            top: -4px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+            pointer-events: none;
+        }
+
+        .duration-display {
+            font-size: 12px;
+            color: #666;
+            min-width: 40px;
+            text-align: center;
+        }
+
+        .speed-toggle {
+            padding: 4px 8px;
+            border-radius: 12px;
+            border: none;
+            background: #e0e0e0;
+            font-size: 12px;
+            font-weight: bold;
+            color: #444;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .speed-toggle:hover {
+            background: #d0d0d0;
+        }
+
+        .speed-toggle:active {
+            transform: scale(0.95);
+        }
+
+        .audio-player {
+            display: none; /* Hide the default audio player */
+        }
+
+        /* Add a special styling for the progress track for WhatsApp feel */
+        .user-message .progress-bar {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .user-message .progress {
+            background: rgba(255, 255, 255, 0.9);
+        }
+
+        .user-message .progress-thumb {
+            background: white;
+        }
+
+        .user-message .play-button,
+        .user-message .speed-toggle {
+            background-color: rgba(255, 255, 255, 0.9);
+            color: #1e293b;
+        }
+
+        .user-message .duration-display {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .options-menu {
+            cursor: pointer;
+            font-size: 16px;
+            padding: 5px;
+            transition: opacity 0.3s;
+        }
+
+        .options-menu:hover {
+            opacity: 0.7;
+        }
+
+        /* Dropdown menu */
+        .options-dropdown {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 40px;
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            z-index: 10;
+        }
+
+        .options-dropdown.show {
+            display: block;
+        }
+
+        .options-dropdown button {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            text-align: left;
+            border: none;
+            background: none;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .options-dropdown button:hover {
+            background: #f0f0f0;
+        }
+
+        .audio-player {
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .record-btn {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+            background-color: #4fd1c5;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 16px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            transition: background-color 0.3s ease;
+        }
+
+        .record-btn:hover {
+            background-color: #2980b9;
+        }
+
+        .record-btn.recording {
+            background-color: #e74c3c;
+        }
+
+        .loading-indicator {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+            color: #666;
+        }
+
+        .loading-indicator.active {
+            display: block;
+        }
+
+        #voice-visualizer {
+            display: block;
+            width: 100%;
+            height: 50px;
+            background-color: #eceff1;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            margin-bottom: 10px;
+        }
+    </style>
+</head> 
+<body>
+    <div class="container">
+        <h1 style="font-size: 1.5em; margin-bottom: 0%;">Interactive Chat with AI</h1>
+
+        <div class="resource">
+            <p style="text-align: center; font-size: 1em; margin-bottom: 10px;">
+                Review the content below then let's have fun explaining what you've understood from it 😊 
+                <br> Feel free to select any concept you'd like to explain !
+            </p>
+            <iframe src="/resources/Bank EDA Presentation.pdf" width="100%" height="100%" style="border: none;"></iframe>
+        </div>
+
+        <div class="avatar-container" id="chat-avatar">
+            <div class="siri-orb">
+                <div class="blob blob1"></div>
+                <div class="blob blob2"></div>
+                <div class="blob blob3"></div>
+            </div>
+        </div>
+
+        <div class="modal" id="chat-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Have fun !!</h2>
+                    <span class="close-btn" id="close-modal">&times;</span>
+                </div>
+
+                <div class="chat-container" id="chat-container">
+                </div>
+
+                <canvas id="voice-visualizer"></canvas>
+
+                <button class="record-btn" id="record-btn">
+                    <i class="fas fa-microphone"></i> Start Recording
+                </button>
+                <div class="loading-indicator" id="loading-indicator">
+                    Processing your message...
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const avatar = document.getElementById('chat-avatar');
+            const modal = document.getElementById('chat-modal');
+            const closeModal = document.getElementById('close-modal');
+            const recordBtn = document.getElementById('record-btn');
+            const chatContainer = document.getElementById('chat-container');
+            const loadingIndicator = document.getElementById('loading-indicator');
+            const siriOrb = document.querySelector('.siri-orb');
+            const blobs = document.querySelectorAll('.blob');
+
+            let isRecording = false;
+            let mediaRecorder;
+            let audioChunks = [];
+            let isAnimating = false;
+            let waves = [];
+            let waveCount = 0;
+            let currentConcept = "Default";
+            let introPlayed = false; 
+
+            const canvas = document.getElementById('voice-visualizer');
+            canvas.width = 500; 
+            canvas.height = 100;
+            const canvasCtx = canvas.getContext('2d');
+            let audioContext, analyser, dataArray, animationId;
+
+            const introAudioUrl = '/uploads/ai_audio/intro_message.mp3';
+
+            // Siri Animation Functions
+            function animateBlobs() {
+                blobs.forEach((blob, index) => {
+                    const speed = 2 + index * 0.5;
+                    const time = performance.now() / 1000;
+                    const x = Math.sin(time * speed) * 10;
+                    const y = Math.cos(time * (speed + 0.5)) * 10;
+                    
+                    blob.style.transform = `translate(${x}px, ${y}px) scale(${0.8 + Math.sin(time * speed) * 0.1})`;
+                });
+                
+                requestAnimationFrame(animateBlobs);
+            }
+            
+            function createWave() {
+                const wave = document.createElement('div');
+                wave.className = 'wave';
+                wave.id = `wave-${waveCount++}`;
+                avatar.appendChild(wave);
+                waves.push(wave);
+                
+                setTimeout(() => {
+                    wave.style.transition = 'all 2s cubic-bezier(0.1, 0.8, 0.1, 1)';
+                    wave.style.transform = 'scale(1.5)';
+                    wave.style.opacity = '0';
+                }, 10);
+                
+                setTimeout(() => {
+                    avatar.removeChild(wave);
+                    waves = waves.filter(w => w !== wave);
+                }, 2000);
+            }
+            
+            function activateSiriOrb() {
+                if (isAnimating) return;
+                isAnimating = true;
+                
+                createWave();
+                setTimeout(createWave, 200);
+                setTimeout(createWave, 400);
+                
+                siriOrb.style.transform = 'scale(1.1)';
+                setTimeout(() => {
+                    siriOrb.style.transform = 'scale(1)';
+                }, 300);
+                
+                blobs.forEach((blob, index) => {
+                    const delay = index * 100;
+                    setTimeout(() => {
+                        blob.style.transform = 'scale(1.2) translate(0, 0)';
+                        setTimeout(() => {
+                            blob.style.transform = 'scale(1) translate(0, 0)';
+                        }, 400);
+                    }, delay);
+                });
+                
+                setTimeout(() => {
+                    isAnimating = false;
+                }, 800);
+            }
+            
+            animateBlobs();
+
+            function getCurrentConcept() {
+                const conceptSelector = document.getElementById('concept-selector');
+                if (conceptSelector && conceptSelector.value) {
+                    return conceptSelector.value;
+                }
+                
+                const resourceIframe = document.querySelector('.resource iframe');
+                if (resourceIframe) {
+                    const src = resourceIframe.getAttribute('src');
+                    if (src) {
+                        const match = src.match(/([^\/]+)\.pdf$/);
+                        if (match && match[1]) {
+                            return match[1].replace(/_/g, ' ');
+                        }
+                    }
+                }
+                
+                return "Bank EDA"; 
+            }
+
+            avatar.addEventListener('click', () => {
+                modal.style.display = 'flex';
+                setTimeout(() => {
+                    modal.classList.add('show');
+                }, 10);
+                
+                // Only play intro audio if it hasn't been played before
+                if (!introPlayed) {
+                    displayAudioMessage(introAudioUrl, 'ai');
+                    introPlayed = true; // Set flag to true after playing
+                }
+                
+                activateSiriOrb();
+                
+                // Update current concept when modal opens
+                currentConcept = getCurrentConcept();
+                console.log("Current concept set to:", currentConcept);
+            });
+
+            function hideModal() {
+                modal.classList.remove('show');
+                setTimeout(() => {
+                    modal.style.display = 'none';
+                }, 300);
+                stopAllAudio();
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                }
+            }
+
+            closeModal.addEventListener('click', hideModal);
+
+            window.addEventListener('click', (event) => {
+                if (event.target === modal) {
+                    hideModal();
+                }
+            });
+
+            recordBtn.addEventListener('click', async () => {
+                if (!isRecording) {
+                    try {
+                        audioChunks = [];
+                        isRecording = true;
+                        recordBtn.classList.add('recording');
+                        recordBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Recording';
+                        activateSiriOrb();
+                        siriOrb.style.boxShadow = "0 0 20px 5px rgba(255, 255, 255, 0.7)";
+
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        audioContext = new AudioContext();
+                        analyser = audioContext.createAnalyser();
+                        const source = audioContext.createMediaStreamSource(stream);
+
+                        source.connect(analyser);
+                        analyser.fftSize = 256;
+                        dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                        mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm'});
+                        
+                        mediaRecorder.ondataavailable = event => {
+                            if (event.data.size > 0) {
+                                audioChunks.push(event.data);
+                            }
+                        };
+                        
+                        mediaRecorder.onerror = (event) => {
+                            console.error('MediaRecorder error:', event);
+                            alert('Error recording audio: ' + event.error);
+                            resetRecordingState();
+                        };
+                        
+                        mediaRecorder.start();
+                        console.log("MediaRecorder started", mediaRecorder.state);
+
+                        visualize();
+                    } catch (error) {
+                        console.error('Error accessing microphone:', error);
+                        alert('Unable to access microphone. Please check permissions.');
+                        resetRecordingState();
+                    }
+                } else {
+                    stopRecording();
+                    if (animationId) {
+                        cancelAnimationFrame(animationId);
+                    }
+                    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    siriOrb.style.boxShadow = "none";
+                }
+            });
+
+            function visualize() {
+                const WIDTH = canvas.width;
+                const HEIGHT = canvas.height;
+                const BAR_WIDTH = 5;
+                const GAP = 2;
+                const NUM_BARS = Math.floor(WIDTH / (BAR_WIDTH + GAP));
+                let offset = 0;
+
+                function draw() {
+                    animationId = requestAnimationFrame(draw);
+
+                    analyser.getByteFrequencyData(dataArray);
+
+                    canvasCtx.fillStyle = '#eceff1';
+                    canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+
+                    canvasCtx.strokeStyle = '#e63946';
+                    canvasCtx.lineWidth = 2;
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(0, HEIGHT / 2);
+                    canvasCtx.lineTo(WIDTH, HEIGHT / 2);
+                    canvasCtx.stroke();
+
+                    for (let i = 0; i < NUM_BARS; i++) {
+                        const value = dataArray[i] || 0;
+                        const barHeight = (value / 255) * HEIGHT;
+
+                        const x = WIDTH - ((i * (BAR_WIDTH + GAP)) + offset) % WIDTH;
+
+                        const color = `rgb(${value}, 100, 255)`;
+
+                        canvasCtx.fillStyle = color;
+                        canvasCtx.fillRect(x, HEIGHT / 2 - barHeight / 2, BAR_WIDTH, barHeight);
+                    }
+
+                    offset += 2;
+                    if (offset > (BAR_WIDTH + GAP) * NUM_BARS) {
+                        offset = 0;
+                    }
+                }
+
+                draw();
+            }
+
+            function stopRecording() {
+                if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                    console.warn('MediaRecorder not active');
+                    return;
+                }
+                
+                console.log("Stopping MediaRecorder", mediaRecorder.state);
+                isRecording = false;
+                recordBtn.classList.remove('recording');
+                recordBtn.innerHTML = '<i class="fas fa-microphone"></i> Start Recording';
+                
+                try {
+                    mediaRecorder.stop();
+                } catch (err) {
+                    console.error('Error stopping MediaRecorder:', err);
+                    resetRecordingState();
+                    return;
+                }
+
+                mediaRecorder.onstop = async () => {
+                    try {
+                        loadingIndicator.classList.add('active');
+                        
+                        if (audioChunks.length === 0) {
+                            throw new Error('No audio data recorded');
+                        }
+                        
+                        currentConcept = getCurrentConcept();
+                        console.log("Sending audio for concept:", currentConcept);
+                        
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const formData = new FormData();
+                        formData.append('audio', audioBlob, 'audio.webm');
+                        formData.append('concept_name', currentConcept);
+                        
+                        console.log("FormData created, audio size:", audioBlob.size, "bytes");
+
+                        const userAudioUrl = URL.createObjectURL(audioBlob);
+                        displayAudioMessage(userAudioUrl, 'user');
+
+                        console.log("Sending audio to server...");
+                        const response = await fetch('/submit_message', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`Server responded with status: ${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        console.log("Server response:", data);
+
+                        if (data.error) {
+                            throw new Error(data.error);
+                        }
+
+                        displayAudioMessage(data.ai_audio_url, 'ai');
+                        activateSiriOrb();
+                    } catch (error) {
+                        console.error('Error processing audio:', error);
+                        alert('Error processing audio: ' + error.message);
+                    } finally {
+                        loadingIndicator.classList.remove('active');
+                    }
+                };
+            }
+
+            function resetRecordingState() {
+                isRecording = false;
+                recordBtn.classList.remove('recording');
+                recordBtn.innerHTML = '<i class="fas fa-microphone"></i> Start Recording';
+                siriOrb.style.boxShadow = "none";
+                if (audioContext) {
+                    audioContext.close().catch(console.error);
+                }
+            }
+
+            function displayAudioMessage(audioUrl, sender) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `chat-message ${sender}-message`;
+
+                const audioContainer = document.createElement('div');
+                audioContainer.className = 'audio-container';
+
+                const playButton = document.createElement('div');
+                playButton.className = 'play-button';
+                playButton.innerHTML = '<i class="fas fa-play"></i>';
+
+                const waveform = document.createElement('div');
+                waveform.className = 'waveform';
+                
+                const progressContainer = document.createElement('div');
+                progressContainer.className = 'progress-container';
+                
+                const progressBar = document.createElement('div');
+                progressBar.className = 'progress-bar';
+                
+                const progress = document.createElement('div');
+                progress.className = 'progress';
+                
+                const progressThumb = document.createElement('div');
+                progressThumb.className = 'progress-thumb';
+                
+                progress.appendChild(progressThumb);
+                progressBar.appendChild(progress);
+                progressContainer.appendChild(progressBar);
+                
+                const durationDisplay = document.createElement('div');
+                durationDisplay.className = 'duration-display';
+                durationDisplay.textContent = '0:00';
+                
+                const speedToggle = document.createElement('button');
+                speedToggle.className = 'speed-toggle';
+                speedToggle.textContent = '1x';
+                
+                const audio = document.createElement('audio');
+                audio.src = audioUrl;
+                audio.className = 'audio-player';
+                
+                let speedIndex = 0;
+                const speeds = [1, 1.5, 2];
+                
+                playButton.addEventListener('click', () => {
+                    if (audio.paused) {
+                        stopAllAudio();
+                        audio.play();
+                        playButton.innerHTML = '<i class="fas fa-pause"></i>';
+                        if (sender === 'ai') {
+                            siriOrb.style.boxShadow = "0 0 20px 5px rgba(0, 128, 255, 0.7)";
+                        }
+                    } else {
+                        audio.pause();
+                        playButton.innerHTML = '<i class="fas fa-play"></i>';
+                        if (sender === 'ai') {
+                            siriOrb.style.boxShadow = "none";
+                        }
+                    }
+                });
+
+                speedToggle.addEventListener('click', () => {
+                    speedIndex = (speedIndex + 1) % speeds.length;
+                    const newSpeed = speeds[speedIndex];
+                    audio.playbackRate = newSpeed;
+                    speedToggle.textContent = newSpeed + 'x';
+                });
+
+                audio.addEventListener('timeupdate', () => {
+                    const percent = (audio.currentTime / audio.duration) * 100;
+                    progress.style.width = percent + '%';
+                    
+                    const remainingTime = audio.duration - audio.currentTime;
+                    const remainingMins = Math.floor(remainingTime / 60);
+                    const remainingSecs = Math.floor(remainingTime % 60).toString().padStart(2, '0');
+                    
+                    durationDisplay.textContent = `${remainingMins}:${remainingSecs}`;
+                });
+
+                progressBar.addEventListener('click', (e) => {
+                    const rect = progressBar.getBoundingClientRect();
+                    const clickPosition = (e.clientX - rect.left) / rect.width;
+                    audio.currentTime = clickPosition * audio.duration;
+                });
+
+                audio.addEventListener('ended', () => {
+                    playButton.innerHTML = '<i class="fas fa-play"></i>';
+                    if (sender === 'ai') {
+                        siriOrb.style.boxShadow = "none";
+                    }
+                });
+
+                audio.addEventListener('loadedmetadata', () => {
+                    const durationMins = Math.floor(audio.duration / 60);
+                    const durationSecs = Math.floor(audio.duration % 60).toString().padStart(2, '0');
+                    durationDisplay.textContent = `${durationMins}:${durationSecs}`;
+                });
+
+                audioContainer.appendChild(playButton);
+                audioContainer.appendChild(waveform);
+                audioContainer.appendChild(progressContainer);
+                audioContainer.appendChild(durationDisplay);
+                audioContainer.appendChild(speedToggle);
+                audioContainer.appendChild(audio);
+                messageDiv.appendChild(audioContainer);
+
+                chatContainer.appendChild(messageDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+
+            function stopAllAudio() {
+                const audios = document.querySelectorAll('audio');
+                audios.forEach(audio => {
+                    audio.pause();
+                    const playButton = audio.parentElement.querySelector('.play-button');
+                    if (playButton) {
+                        playButton.innerHTML = '<i class="fas fa-play"></i>';
+                    }
+                });
+                siriOrb.style.boxShadow = "none";
+            }
+        });
+    </script>
+</body>
+</html>

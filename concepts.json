@@ -1,0 +1,69 @@
+{
+    "concepts": [
+        {
+            "name": "Contract Type Analysis",
+            "description": "Analysis of risk patterns between cash loans and revolving loans.",
+            "golden_answer": "Cash loans have a higher default rate (>8%) compared to revolving loans (>5%). This indicates lower risk is associated with revolving loans, which should be prioritized first when considering loan approvals."
+        },
+        {
+            "name": "Age Group Risk Analysis",
+            "description": "Analysis of default rates across different age groups of clients.",
+            "golden_answer": "There's a clear pattern where default rates decrease with age: 10% for ages 20-40, 7% for ages 40-60, and 5% for ages 60+. This indicates that older clients present lower risk for loan approvals, with less risk associated with people of advanced age."
+        },
+        {
+            "name": "Income Level Risk Analysis",
+            "description": "Examination of how income levels correlate with loan default rates.",
+            "golden_answer": "Clients with total income above 3 Lakhs have lower default rates, while those with income below 2 Lakhs have higher default rates. The pattern shows that higher income correlates with lower default risk, making higher-income clients preferred candidates for loan approval."
+        },
+        {
+            "name": "Income Type Risk Analysis",
+            "description": "Analysis of default patterns across different income sources.",
+            "golden_answer": "Pensioners and State Servants have relatively lower default rates, making them lower-risk clients. Working professionals and commercial associates have slightly higher default rates. Very high default percentages appear in 'Maternity Leave' and 'Unemployed' categories, but these can be ignored due to low sample counts."
+        },
+        {
+            "name": "Education Type Risk Analysis",
+            "description": "Examination of how education level affects default risk.",
+            "golden_answer": "Clients with Academic degrees or Higher education tend to default less frequently, indicating lower risk. Clients with Lower secondary, Secondary special, or Incomplete higher education show higher default rates. This suggests education level is a useful risk indicator when evaluating loan applications."
+        },
+        {
+            "name": "Occupation Type Risk Analysis",
+            "description": "Analysis of default patterns across different occupations.",
+            "golden_answer": "Lower-risk occupations include Core staff, Managers, High-skill tech staff, Accountants, Medicine professionals, Private service workers, Secretaries, HR, and IT staff. Higher-risk occupations showing elevated default rates include Sales staff, Drivers, Security staff, Cooking staff, Low-skill Laborers (very high risk), and Waiters/barmen. Other occupations fall within an acceptable range of 7.5-9% default rate."
+        },
+        {
+            "name": "Last Information Change Risk Analysis",
+            "description": "Analysis of how recently changed registration or ID information correlates with default risk.",
+            "golden_answer": "Clients who changed their information within the last 5 years have higher default rates. Those who changed information more than 5 years ago have lower default rates. The lowest risk is associated with clients who changed their information more than 16 years ago, indicating stability might be a positive risk indicator."
+        },
+        {
+            "name": "Income vs Credit Request Analysis",
+            "description": "Bivariate analysis of income levels against credit amount requested.",
+            "golden_answer": "Clients with lower income who request credit amounts higher than their income show high default rates (10%). Clients with higher income who request proportional credit amounts have much lower default rates (5-6%). This suggests that the ratio of requested credit to income is an important risk factor."
+        },
+        {
+            "name": "Income vs Age Analysis",
+            "description": "Bivariate analysis of income levels across different age groups.",
+            "golden_answer": "Young clients (age 20-40) with lower income levels (<2-3 Lakh) show high default rates. Clients older than 50 across all income levels demonstrate lower default rates. The pattern reveals that both higher age and higher income correlate with lower default rates, with the combination of the two factors presenting the lowest risk."
+        },
+        {
+            "name": "Income vs Housing Type Analysis",
+            "description": "Bivariate analysis examining income levels against different housing situations.",
+            "golden_answer": "Lower-income clients (<2 Lakhs) living in rented apartments or with parents show very high default rates (10-13%). Clients with owned apartments/houses or office apartments show average default rates (6-8%). Clients with office apartments or owned houses/apartments AND high income demonstrate very low default rates (3-6%), indicating this combination presents the lowest risk."
+        },
+        {
+            "name": "Income vs Last Phone Change Analysis",
+            "description": "Bivariate analysis of income levels against recency of phone number changes.",
+            "golden_answer": "Clients with lower income (<2-3 lakhs) who changed their phone numbers recently (<2-3 years) have higher default rates. Clients who have maintained the same phone number for longer periods (>5-6 years) have lower default rates, suggesting stability in contact information may be a positive risk indicator."
+        },
+        {
+            "name": "Income vs Region Rating Analysis",
+            "description": "Bivariate analysis of income levels against the rating of client's region.",
+            "golden_answer": "Clients from regions with ratings <1.5 show lower default rates across all income levels. Clients from regions rated 2-2.5 have acceptable default rates. Clients from regions rated 3 show high default rates regardless of income level, suggesting regional factors significantly impact default risk independent of income."
+        },
+        {
+            "name": "Previous Contract Status Analysis",
+            "description": "Analysis of how previous application status affects default risk.",
+            "golden_answer": "Clients whose previous applications were rejected show a very high default rate (~12%). Those who previously cancelled their applications have a moderate default rate (~9%). Clients whose previous applications were approved show lower default rates (~7.5%). This suggests the bank's previous rejection decisions were largely justified based on risk factors."
+        }
+    ]
+}
