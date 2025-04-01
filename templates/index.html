@@ -436,10 +436,9 @@
         }
 
         .audio-player {
-            display: none; /* Hide the default audio player */
+            display: none; 
         }
 
-        /* Add a special styling for the progress track for WhatsApp feel */
         .user-message .progress-bar {
             background: rgba(255, 255, 255, 0.3);
         }
@@ -473,7 +472,6 @@
             opacity: 0.7;
         }
 
-        /* Dropdown menu */
         .options-dropdown {
             display: none;
             position: absolute;
@@ -713,15 +711,13 @@
                     modal.classList.add('show');
                 }, 10);
                 
-                // Only play intro audio if it hasn't been played before
                 if (!introPlayed) {
                     displayAudioMessage(introAudioUrl, 'ai');
-                    introPlayed = true; // Set flag to true after playing
+                    introPlayed = true; 
                 }
                 
                 activateSiriOrb();
                 
-                // Update current concept when modal opens
                 currentConcept = getCurrentConcept();
                 console.log("Current concept set to:", currentConcept);
             });
