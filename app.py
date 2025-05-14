@@ -2,6 +2,7 @@
 # from werkzeug.utils import secure_filename
 # import openai
 # import os
+# import re
 # from gtts import gTTS
 # import whisper  
 # import json
@@ -19,8 +20,11 @@
 #                     format='%(asctime)s - %(levelname)s - %(message)s')
 # logger = logging.getLogger(__name__)
 
-# OPENAI_API_KEY = "openai_api_key_here"  
-# openai.api_key = OPENAI_API_KEY
+# OPENAI_API_KEY = "openai-api-key"
+# client = openai.OpenAI(
+#     api_key=OPENAI_API_KEY,
+#     base_url="https://api.openai.com/v1"
+# )
 
 # app = Flask(__name__)
 # app.secret_key = 'supersecretkey'
@@ -76,6 +80,28 @@
 #     logger.error(f"Failed to load Whisper model: {str(e)}")
 #     model = None
 
+# whisper_model = None
+
+# def get_whisper_model():
+#     global whisper_model
+#     if whisper_model is None:
+#         try:
+#             print("Loading Whisper model...")
+#             whisper_model = whisper.load_model("small")
+#             print("Whisper model loaded successfully")
+#         except Exception as e:
+#             print(f"Failed to load Whisper model: {str(e)}")
+#     return whisper_model
+
+# @lru_cache(maxsize=32)
+# def cached_transcribe(audio_file_path_hash):
+#     """Helper function to enable caching of transcription results"""
+#     model = get_whisper_model()
+#     if model:
+#         result = model.transcribe(audio_file_path_hash)
+#         return result["text"]
+#     return "Transcription failed."
+
 # def speech_to_text(audio_file_path):
 #     """Convert audio to text using OpenAI Whisper API or local fallback."""
 #     try:
@@ -94,32 +120,33 @@
 #             return result["text"]
 #         except Exception as e2:
 #             print(f"Error using local Whisper model: {str(e2)}")
-#             return "Sorry, I couldn't understand the audio."
+#             return "Your audio input could not be processed."
 
-# def get_interaction_id():
+# def get_interaction_id(participant_id=None):
 #     """Generate a unique interaction ID based on timestamp."""
-#     return f"INT_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+#     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+#     if participant_id:
+#         return f"{participant_id}_{timestamp}"
+#     return timestamp
 
-
-# def initialize_log_file(interaction_id, trial_type="Trial_1"):
+# def initialize_log_file(interaction_id, participant_id=None, trial_type="Trial_1"):
 #     """Initialize a new log file with header information for each server reload."""
 #     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-#     log_filename = f"{trial_type}_log_{timestamp}.txt" 
+#     if participant_id:
+#         log_filename = f"{participant_id}_{trial_type}_log_{timestamp}.txt"
+#     else:
+#         log_filename = f"{trial_type}_log_{timestamp}.txt"
+        
 #     log_file_path = os.path.join(app.config['LOGS_FOLDER'], log_filename)
-    
-#     counter = 1
-#     while os.path.exists(log_file_path):
-#         log_filename = f"conversation_log_{timestamp}_{counter}.txt"
-#         log_file_path = os.path.join(app.config['LOGS_FOLDER'], log_filename)
-#         counter += 1
 
 #     try:
 #         with open(log_file_path, "w", encoding="utf-8") as file:
 #             file.write("=" * 80 + "\n")
 #             file.write("CONVERSATION LOG\n")
 #             file.write("=" * 80 + "\n\n")
+#             file.write(f"PARTICIPANT ID: {participant_id}\n")
 #             file.write(f"INTERACTION ID: {interaction_id}\n")
-#             file.write(f"VERSION: 2\n")
+#             file.write(f"VERSION: 1\n")
 #             file.write(f"TRIAL: {trial_type}\n")
 #             file.write(f"TIMESTAMP: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 #             file.write("\n" + "-" * 80 + "\n\n")
@@ -154,10 +181,10 @@
 #         print(f"Error logging interaction: {str(e)}")
 #         return False
     
-# def get_audio_filename(prefix, interaction_id, extension='.mp3'):
-#     """Generate a unique audio filename with the interaction ID."""
+# def get_audio_filename(prefix, interaction_id, concept_name):
 #     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-#     return f"{prefix}_{interaction_id}_{timestamp}{extension}"
+#     sanitized_concept = re.sub(r'[^\w\s-]', '', concept_name).replace(' ', '_')
+#     return f"{prefix}_{interaction_id}_{sanitized_concept}_{timestamp}.wav"
 
 # def generate_audio(text, file_path):
 #     """Generate speech (audio) from the provided text using gTTS."""
@@ -202,11 +229,12 @@
 # def home():
 #     """Render the home page."""
 #     session['interaction_id'] = get_interaction_id()
-#     session['trial_type'] = request.args.get('trial', 'Trial_1')
-    
+#     session['trial_type'] = request.args.get('trial', 'Trial_1')        
+#     session['concept_attempts'] = {}
+
 #     initialize_log_file(session['interaction_id'], session['trial_type'])
     
-#     log_interaction("SYSTEM", None, f"Session initialized with trial type: {session['trial_type']}")
+#     initialize_log_file(session['interaction_id'], None, session['trial_type'])
     
 #     return render_template('index.html')
 
@@ -254,8 +282,8 @@
 # def set_context():
 #     """Set the context for a specific concept from the provided material."""
 #     concept_name = request.form.get('concept_name')
+#     slide_number = request.form.get('slide_number', '0')
 #     logger.info(f"Setting context for concept: {concept_name}")
-    
 #     concepts = load_concepts()
     
 #     selected_concept = next((c for c in concepts if c["name"] == concept_name), None)
@@ -266,33 +294,103 @@
 
 #     session['concept_name'] = selected_concept["name"]
 #     session['golden_answer'] = selected_concept["golden_answer"]
-#     session['attempt_count'] = 0
     
+#     if 'concept_attempts' not in session:
+#         session['concept_attempts'] = {}
+#     session['concept_attempts'][concept_name] = 0
+#     session.modified = True
+
 #     log_interaction("SYSTEM", selected_concept["name"], 
 #                     f"Context set for concept: {selected_concept['name']}")
 
 #     logger.info(f"Context set successfully for: {selected_concept['name']}")
 #     return jsonify({'message': f'Context set for {selected_concept["name"]}.'})
 
+# @app.route('/change_concept', methods=['POST'])
+# def change_concept():
+#     """Log when a user navigates to a different slide/concept."""
+#     data = request.get_json()
+#     slide_number = data.get('slide_number', 'unknown')
+#     concept_name = data.get('concept_name', 'unknown')
+    
+#     if 'concept_attempts' not in session:
+#         session['concept_attempts'] = {}
+#     session['concept_attempts'][concept_name] = 0
+#     session.modified = True
+    
+#     print(f"Concept changed to: {concept_name}")
+#     print(f"Reset attempt count for concept: {concept_name}")
+#     print("Current session state:", dict(session))
+
+#     message = f"User navigated to slide [{slide_number}] with the concept: [{concept_name}]"
+#     log_interaction("SYSTEM", concept_name, message)
+    
+#     return jsonify({'status': 'success', 'message': 'Navigation and concept change logged'})
+
+# @app.route('/log_interaction_event', methods=['POST'])
+# def log_interaction_event():
+#     """Log user interaction events like chat window open/close, audio controls, etc."""
+#     data = request.get_json()
+#     event_type = data.get('event_type')
+#     event_details = data.get('details', {})
+#     concept_name = data.get('concept_name')
+    
+#     message = f"User {event_type}"
+#     if event_type == "CHAT_WINDOW":
+#         message = f"User {event_details.get('action', 'unknown')} the chat window"
+#     elif event_type == "AUDIO_PLAYBACK":
+#         message = f"User {event_details.get('action', 'unknown')} audio playback at {event_details.get('timestamp', '0')} seconds"
+#     elif event_type == "AUDIO_SPEED":
+#         message = f"User changed audio speed to {event_details.get('speed', '1')}x"
+#     elif event_type == "RECORDING":
+#         action = event_details.get('action', 'unknown')
+#         timestamp = event_details.get('timestamp', '')
+#         if action == 'started':
+#             message = f"User started recording at {timestamp}"
+#         elif action == 'stopped':
+#             message = f"User stopped recording at {timestamp}"
+#         elif action == 'submitted':
+#             blob_size = event_details.get('blobSize', 'unknown')
+#             duration = event_details.get('duration', 'unknown')
+#             message = f"User submitted recording (size: {blob_size} bytes, duration: {duration}s) at {timestamp}"
+        
+#     log_interaction("SYSTEM", concept_name, message)
+    
+#     return jsonify({'status': 'success', 'message': 'Event logged successfully'})
+    
 # @app.route('/get_intro_audio', methods=['GET'])
 # def get_intro_audio():
 #     """Generate the introductory audio message for the chatbot."""
-#     interaction_id = session.get('interaction_id', get_interaction_id())
-#     intro_text = "Hello, let us begin the self-explanation journey, just go through each concept of the following Univariate Analysis concepts, and then go on with explaining what you understood from each concept!"
-    
-#     intro_audio_filename = get_audio_filename('intro', interaction_id)
-#     intro_audio_path = os.path.join(app.config['AI_AUDIO_FOLDER'], intro_audio_filename)
+#     try:
+#         interaction_id = session.get('interaction_id', get_interaction_id())
+#         intro_text = "Hello, let us begin the self-explanation journey, just go through each concept of the following Univariate Analysis concepts, and then go on with explaining what you understood from each concept!"
+        
+#         intro_audio_filename = get_audio_filename('intro', interaction_id, 'Introduction')  # Add 'Introduction' as concept
+#         intro_audio_path = os.path.join(app.config['AI_AUDIO_FOLDER'], intro_audio_filename)
 
-#     generate_audio(intro_text, intro_audio_path)
-    
-#     log_interaction("AI", "Introduction", intro_text)
-    
-#     if os.path.exists(intro_audio_path):
-#         intro_audio_url = f"/uploads/ai_audio/{intro_audio_filename}"
-#         return jsonify({'intro_audio_url': intro_audio_url})
-#     else:
-#         return jsonify({'error': 'Failed to generate introduction audio'}), 500
-    
+#         if generate_audio(intro_text, intro_audio_path):
+#             log_interaction("AI", "Introduction", intro_text)
+            
+#             if os.path.exists(intro_audio_path):
+#                 intro_audio_url = f"/uploads/ai_audio/{intro_audio_filename}"
+#                 return jsonify({
+#                     'status': 'success',
+#                     'intro_audio_url': intro_audio_url,
+#                     'intro_text': intro_text
+#                 })
+            
+#         return jsonify({
+#             'status': 'error',
+#             'message': 'Failed to generate introduction audio'
+#         }), 500
+        
+#     except Exception as e:
+#         print(f"Error in get_intro_audio: {str(e)}")
+#         return jsonify({
+#             'status': 'error',
+#             'message': str(e)
+#         }), 500
+        
 # @app.route('/get_concept_audio/<concept_name>', methods=['GET'])
 # def get_concept_audio(concept_name):
 #     """Generate concept introduction audio message."""
@@ -339,7 +437,6 @@
 
 #     if 'concept_attempts' not in session:
 #         session['concept_attempts'] = {}
-
 #     if concept_name not in session['concept_attempts']:
 #         session['concept_attempts'][concept_name] = 0
 
@@ -347,24 +444,23 @@
 #     print(f"Current attempt count for {concept_name}: {current_attempt_count}")
 
 #     if audio_file:
-#         user_audio_filename = get_audio_filename('user', interaction_id, '.wav')
+#         user_audio_filename = get_audio_filename('user', interaction_id, concept_name)
 #         audio_path = os.path.join(app.config['USER_AUDIO_FOLDER'], user_audio_filename)
 #         audio_file.save(audio_path)
 #         user_message = speech_to_text(audio_path)
     
 #     log_interaction("USER", concept_name, user_message)
 
-#     # Increment the attempt count AFTER generating the response
 #     session['concept_attempts'][concept_name] = current_attempt_count + 1
+#     session.modified = True 
 #     print(f"Updated attempt count for {concept_name}: {session['concept_attempts'][concept_name]}")
 
 #     ai_response = generate_response(
 #         user_message,
 #         selected_concept["name"],
 #         selected_concept["golden_answer"],
-#         current_attempt_count  # Pass the current count (not incremented yet)
+#         current_attempt_count
 #     )
-
 
 #     if not ai_response:
 #         print("Error: AI response generation failed!")  
@@ -374,19 +470,20 @@
 
 #     log_interaction("AI", concept_name, ai_response)
 
-#     ai_response_filename = get_audio_filename('ai_response', interaction_id)
+#     ai_response_filename = get_audio_filename('ai_response', interaction_id, concept_name)
 #     audio_response_path = os.path.join(app.config['AI_AUDIO_FOLDER'], ai_response_filename)
 #     generate_audio(ai_response, audio_response_path)
 
 #     if not os.path.exists(audio_response_path):
 #         print("Error: AI audio file not created!")  
 #         return jsonify({'error': 'AI audio generation failed.'})
-
+    
 #     ai_audio_url = f"/uploads/ai_audio/{ai_response_filename}"
 #     return jsonify({
 #         'response': ai_response,
 #         'ai_audio_url': ai_audio_url,
-#         'user_transcript': user_message 
+#         'user_transcript': user_message,
+#         'attempt_count': session['concept_attempts'][concept_name]
 #     })
 
 # def generate_response(user_message, concept_name, golden_answer, attempt_count):
@@ -415,31 +512,29 @@
 #     """
 
 #     if attempt_count == 0:
-#         user_prompt += "\nThis is the user's first attempt. If the explanation is correct, communicate this to the user. If it is not correct, provide general feedback and a broad hint to guide the user."
+#         user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide general feedback and a broad hint to guide the user."
 #     elif attempt_count == 1:
-#         user_prompt += "\nThis is the user's second attempt. If the explanation is correct, communicate this to the user. If it is not correct, provide more specific feedback and highlight key elements the user missed."
+#         user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide more specific feedback and highlight key elements the user missed."
 #     elif attempt_count == 2:
-#         user_prompt += "\nThis is the user's third attempt. If the explanation is correct, communicate this to the user. If it is not correct, provide the correct explanation, as the user has made multiple attempts."
+#         user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide the correct explanation, as the user has made multiple attempts."
 #     else:
 #         user_prompt += "\nLet the user know they have completed three self-explanation attempts. Instruct them to stop here and tell them to continue with the next concept."
 
 #     try:
-#         response = openai.ChatCompletion.create(
+#         response = client.chat.completions.create(
 #             model="gpt-4o-mini",
-#             messages=[{"role": "system", "content": base_prompt},
-#                       {"role": "user", "content": user_prompt}],
+#             messages=[
+#                 {"role": "developer", "content": base_prompt},
+#                 {"role": "user", "content": user_prompt}
+#             ],
 #             max_tokens=200,
 #             temperature=0.7,
 #         )
 
 #         ai_response = response.choices[0].message.content
-#         attempt_count += 1
-#         session['attempt_count'] = attempt_count
 #         return ai_response
 #     except Exception as e:
 #         return f"Error generating AI response: {str(e)}"
-
-
 
 # @app.route('/uploads/<folder>/<filename>')
 # def serve_audio(folder, filename):
@@ -458,29 +553,54 @@
 
 # @app.route('/set_trial_type', methods=['POST'])
 # def set_trial_type():
-#     """Set the trial type (Trial_1, Trial_2, or Test) via POST request from frontend."""
-#     data = request.get_json()
-#     trial_type = data.get('trial_type', 'Trial_1')
+#     """Set the trial type and participant ID for the session."""
+#     try:
+#         data = request.get_json()
+#         print("Received data:", data)  # Debug print
+        
+#         trial_type = data.get('trial_type', 'Trial_1')
+#         participant_id = data.get('participant_id')
 
-#     valid_types = ["Trial_1", "Trial_2", "Test"]
-#     if trial_type not in valid_types:
-#         return jsonify({"error": "Invalid trial type"}), 400
+#         if not participant_id:
+#             print("Missing participant ID")  # Debug print
+#             return jsonify({
+#                 "error": "Participant ID is required",
+#                 "received_data": data
+#             }), 400
 
-#     old_trial_type = session.get('trial_type', 'None')
+#         valid_types = ["Trial_1", "Trial_2", "Test"]
+#         if trial_type not in valid_types:
+#             print(f"Invalid trial type: {trial_type}")  # Debug print
+#             return jsonify({
+#                 "error": "Invalid trial type",
+#                 "received_data": data
+#             }), 400
+#         old_trial_type = session.get('trial_type', 'None')
 
-#     session['trial_type'] = trial_type
-#     session['interaction_id'] = get_interaction_id()
-#     session['concept_attempts'] = {}
+#         interaction_id = get_interaction_id(participant_id)
 
-#     initialize_log_file(session['interaction_id'], trial_type)
+#         session['trial_type'] = trial_type
+#         session['participant_id'] = participant_id
+#         session['interaction_id'] = interaction_id
+#         session['concept_attempts'] = {}
 
-#     log_interaction("SYSTEM", None, f"Trial type changed from {old_trial_type} to {trial_type}")
+#         initialize_log_file(interaction_id, participant_id, trial_type)
 
-#     return jsonify({
-#         'status': 'success',
-#         'trial_type': trial_type,
-#         'interaction_id': session['interaction_id']
-#     })
+#         log_interaction("SYSTEM", None, f"Trial type changed from {old_trial_type} to {trial_type} for participant {participant_id}")
+
+#         print(f"Successfully set trial type for participant {participant_id}")  # Debug print
+
+#         return jsonify({
+#             'status': 'success',
+#             'trial_type': trial_type,
+#             'interaction_id': interaction_id
+#         })
+#     except Exception as e:
+#         print(f"Error in set_trial_type: {str(e)}")  # Debug print
+#         return jsonify({
+#             "error": f"Server error: {str(e)}",
+#             "type": "server_error"
+#         }), 500
 
 # if __name__ == '__main__':
 #     startup_interaction_id = get_interaction_id()
@@ -517,10 +637,32 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 from flask import Flask, request, render_template, jsonify, session, send_from_directory
 from werkzeug.utils import secure_filename
 import openai
 import os
+import re
 from gtts import gTTS
 import whisper  
 import json
@@ -533,13 +675,18 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from functools import wraps
+import shutil
+import tempfile
 
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = "openai_api_key_here"  
-openai.api_key = OPENAI_API_KEY
+OPENAI_API_KEY = "openai-api-key"
+client = openai.OpenAI(
+    api_key=OPENAI_API_KEY,
+    base_url="https://api.openai.com/v1"
+)
 
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
@@ -595,6 +742,28 @@ except Exception as e:
     logger.error(f"Failed to load Whisper model: {str(e)}")
     model = None
 
+whisper_model = None
+
+def get_whisper_model():
+    global whisper_model
+    if whisper_model is None:
+        try:
+            print("Loading Whisper model...")
+            whisper_model = whisper.load_model("small")
+            print("Whisper model loaded successfully")
+        except Exception as e:
+            print(f"Failed to load Whisper model: {str(e)}")
+    return whisper_model
+
+@lru_cache(maxsize=32)
+def cached_transcribe(audio_file_path_hash):
+    """Helper function to enable caching of transcription results"""
+    model = get_whisper_model()
+    if model:
+        result = model.transcribe(audio_file_path_hash)
+        return result["text"]
+    return "Transcription failed."
+
 def speech_to_text(audio_file_path):
     """Convert audio to text using OpenAI Whisper API or local fallback."""
     try:
@@ -613,32 +782,33 @@ def speech_to_text(audio_file_path):
             return result["text"]
         except Exception as e2:
             print(f"Error using local Whisper model: {str(e2)}")
-            return "Sorry, I couldn't understand the audio."
+            return "Your audio input could not be processed."
 
-def get_interaction_id():
+def get_interaction_id(participant_id=None):
     """Generate a unique interaction ID based on timestamp."""
-    return f"INT_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    if participant_id:
+        return f"{participant_id}_{timestamp}"
+    return timestamp
 
-
-def initialize_log_file(interaction_id, trial_type="Trial_1"):
+def initialize_log_file(interaction_id, participant_id=None, trial_type="Trial_1"):
     """Initialize a new log file with header information for each server reload."""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_filename = f"{trial_type}_log_{timestamp}.txt" 
+    if participant_id:
+        log_filename = f"{participant_id}_{trial_type}_log_{timestamp}.txt"
+    else:
+        log_filename = f"{trial_type}_log_{timestamp}.txt"
+        
     log_file_path = os.path.join(app.config['LOGS_FOLDER'], log_filename)
-    
-    counter = 1
-    while os.path.exists(log_file_path):
-        log_filename = f"conversation_log_{timestamp}_{counter}.txt"
-        log_file_path = os.path.join(app.config['LOGS_FOLDER'], log_filename)
-        counter += 1
 
     try:
         with open(log_file_path, "w", encoding="utf-8") as file:
             file.write("=" * 80 + "\n")
             file.write("CONVERSATION LOG\n")
             file.write("=" * 80 + "\n\n")
+            file.write(f"PARTICIPANT ID: {participant_id}\n")
             file.write(f"INTERACTION ID: {interaction_id}\n")
-            file.write(f"VERSION: 2\n")
+            file.write(f"VERSION: 1\n")
             file.write(f"TRIAL: {trial_type}\n")
             file.write(f"TIMESTAMP: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             file.write("\n" + "-" * 80 + "\n\n")
@@ -673,24 +843,34 @@ def log_interaction(speaker, concept_name, text):
         print(f"Error logging interaction: {str(e)}")
         return False
     
-def get_audio_filename(prefix, interaction_id, extension='.mp3'):
-    """Generate a unique audio filename with the interaction ID."""
+def get_audio_filename(prefix, interaction_id, concept_name):
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    return f"{prefix}_{interaction_id}_{timestamp}{extension}"
+    sanitized_concept = re.sub(r'[^\w\s-]', '', concept_name).replace(' ', '_')
+    return f"{prefix}_{interaction_id}_{sanitized_concept}_{timestamp}.wav"
 
 def generate_audio(text, file_path):
     """Generate speech (audio) from the provided text using gTTS."""
     try:
-        tts = gTTS(text=text, lang='en')
-        tts.save(file_path)
-        if os.path.exists(file_path):
-            print(f"Audio file successfully saved: {file_path}")
-            return True
-        else:
-            print(f"Failed to save audio file: {file_path}")
-            return False
+        # Add error handling and retry logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                tts = gTTS(text=text, lang='en', slow=False)
+                tts.save(file_path)
+                # Verify file was created and has content
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    print(f"Audio file successfully saved: {file_path}")
+                    return True
+                else:
+                    print(f"Audio file empty or not created: {file_path}")
+                    continue
+            except Exception as e:
+                print(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(1)  # Wait before retrying
     except Exception as e:
-        print(f"Error generating audio: {str(e)}")
+        print(f"Error generating audio: Failed to connect. Probable cause: {str(e)}")
         return False
     
     
@@ -721,11 +901,12 @@ def save_screen_recording():
 def home():
     """Render the home page."""
     session['interaction_id'] = get_interaction_id()
-    session['trial_type'] = request.args.get('trial', 'Trial_1')
-    
+    session['trial_type'] = request.args.get('trial', 'Trial_1')        
+    session['concept_attempts'] = {}
+
     initialize_log_file(session['interaction_id'], session['trial_type'])
     
-    log_interaction("SYSTEM", None, f"Session initialized with trial type: {session['trial_type']}")
+    initialize_log_file(session['interaction_id'], None, session['trial_type'])
     
     return render_template('index.html')
 
@@ -773,8 +954,8 @@ def load_concepts():
 def set_context():
     """Set the context for a specific concept from the provided material."""
     concept_name = request.form.get('concept_name')
+    slide_number = request.form.get('slide_number', '0')
     logger.info(f"Setting context for concept: {concept_name}")
-    
     concepts = load_concepts()
     
     selected_concept = next((c for c in concepts if c["name"] == concept_name), None)
@@ -785,36 +966,115 @@ def set_context():
 
     session['concept_name'] = selected_concept["name"]
     session['golden_answer'] = selected_concept["golden_answer"]
-    session['attempt_count'] = 0
     
+    if 'concept_attempts' not in session:
+        session['concept_attempts'] = {}
+    session['concept_attempts'][concept_name] = 0
+    session.modified = True
+
     log_interaction("SYSTEM", selected_concept["name"], 
                     f"Context set for concept: {selected_concept['name']}")
 
     logger.info(f"Context set successfully for: {selected_concept['name']}")
     return jsonify({'message': f'Context set for {selected_concept["name"]}.'})
 
+@app.route('/change_concept', methods=['POST'])
+def change_concept():
+    """Log when a user navigates to a different slide/concept."""
+    data = request.get_json()
+    slide_number = data.get('slide_number', 'unknown')
+    concept_name = data.get('concept_name', 'unknown')
+    
+    if 'concept_attempts' not in session:
+        session['concept_attempts'] = {}
+    session['concept_attempts'][concept_name] = 0
+    session.modified = True
+    
+    print(f"Concept changed to: {concept_name}")
+    print(f"Reset attempt count for concept: {concept_name}")
+    print("Current session state:", dict(session))
+
+    message = f"User navigated to slide [{slide_number}] with the concept: [{concept_name}]"
+    log_interaction("SYSTEM", concept_name, message)
+    
+    return jsonify({'status': 'success', 'message': 'Navigation and concept change logged'})
+
+@app.route('/log_interaction_event', methods=['POST'])
+def log_interaction_event():
+    """Log user interaction events like chat window open/close, audio controls, etc."""
+    data = request.get_json()
+    event_type = data.get('event_type')
+    event_details = data.get('details', {})
+    concept_name = data.get('concept_name')
+    
+    message = f"User {event_type}"
+    if event_type == "CHAT_WINDOW":
+        message = f"User {event_details.get('action', 'unknown')} the chat window"
+    elif event_type == "AUDIO_PLAYBACK":
+        message = f"User {event_details.get('action', 'unknown')} audio playback at {event_details.get('timestamp', '0')} seconds"
+    elif event_type == "AUDIO_SPEED":
+        message = f"User changed audio speed to {event_details.get('speed', '1')}x"
+    elif event_type == "RECORDING":
+        action = event_details.get('action', 'unknown')
+        timestamp = event_details.get('timestamp', '')
+        if action == 'started':
+            message = f"User started recording at {timestamp}"
+        elif action == 'stopped':
+            message = f"User stopped recording at {timestamp}"
+        elif action == 'submitted':
+            blob_size = event_details.get('blobSize', 'unknown')
+            duration = event_details.get('duration', 'unknown')
+            message = f"User submitted recording (size: {blob_size} bytes, duration: {duration}s) at {timestamp}"
+        
+    log_interaction("SYSTEM", concept_name, message)
+    
+    return jsonify({'status': 'success', 'message': 'Event logged successfully'})
+    
 @app.route('/get_intro_audio', methods=['GET'])
 def get_intro_audio():
     """Generate the introductory audio message for the chatbot."""
-    interaction_id = session.get('interaction_id', get_interaction_id())
-    intro_text = "Hello, let us begin the self-explanation journey, just go through each concept of the following Univariate Analysis concepts, and then go on with explaining what you understood from each concept!"
-    
-    intro_audio_filename = get_audio_filename('intro', interaction_id)
-    intro_audio_path = os.path.join(app.config['AI_AUDIO_FOLDER'], intro_audio_filename)
+    try:
+        interaction_id = session.get('interaction_id', get_interaction_id())
+        intro_text = "Hello, let us begin the self-explanation journey, just go through each concept of the following Univariate Analysis concepts, and then go on with explaining what you understood from each concept!"
+        
+        intro_audio_filename = get_audio_filename('intro', interaction_id, 'Introduction')
+        intro_audio_path = os.path.join(app.config['AI_AUDIO_FOLDER'], intro_audio_filename)
 
-    generate_audio(intro_text, intro_audio_path)
-    
-    log_interaction("AI", "Introduction", intro_text)
-    
-    if os.path.exists(intro_audio_path):
-            intro_audio_url = f"/uploads/ai_audio/{intro_audio_filename}"
-            return jsonify({
-                'intro_audio_url': intro_audio_url,
-                'intro_text': intro_text
-            })
-    else:
-            return jsonify({'error': 'Failed to generate introduction audio'}), 500
-
+        # Add retry logic for audio generation
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if generate_audio(intro_text, intro_audio_path):
+                    log_interaction("AI", "Introduction", intro_text)
+                    
+                    if os.path.exists(intro_audio_path) and os.path.getsize(intro_audio_path) > 0:
+                        intro_audio_url = f"/uploads/ai_audio/{intro_audio_filename}"
+                        return jsonify({
+                            'status': 'success',
+                            'intro_audio_url': intro_audio_url,
+                            'intro_text': intro_text
+                        })
+                    
+                print(f"Attempt {attempt + 1} failed, retrying...")
+                time.sleep(1)
+            except Exception as e:
+                print(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(1)
+                
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to generate introduction audio after multiple attempts'
+        }), 500
+        
+    except Exception as e:
+        print(f"Error in get_intro_audio: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+        
 @app.route('/get_concept_audio/<concept_name>', methods=['GET'])
 def get_concept_audio(concept_name):
     """Generate concept introduction audio message."""
@@ -861,7 +1121,6 @@ def submit_message():
 
     if 'concept_attempts' not in session:
         session['concept_attempts'] = {}
-
     if concept_name not in session['concept_attempts']:
         session['concept_attempts'][concept_name] = 0
 
@@ -869,12 +1128,16 @@ def submit_message():
     print(f"Current attempt count for {concept_name}: {current_attempt_count}")
 
     if audio_file:
-        user_audio_filename = get_audio_filename('user', interaction_id, '.wav')
+        user_audio_filename = get_audio_filename('user', interaction_id, concept_name)
         audio_path = os.path.join(app.config['USER_AUDIO_FOLDER'], user_audio_filename)
         audio_file.save(audio_path)
         user_message = speech_to_text(audio_path)
     
     log_interaction("USER", concept_name, user_message)
+
+    session['concept_attempts'][concept_name] = current_attempt_count + 1
+    session.modified = True 
+    print(f"Updated attempt count for {concept_name}: {session['concept_attempts'][concept_name]}")
 
     ai_response = generate_response(
         user_message,
@@ -889,31 +1152,22 @@ def submit_message():
 
     print(f"AI Response: {ai_response}") 
 
-    # Increment the attempt count AFTER generating the response
-    session['concept_attempts'][concept_name] = current_attempt_count + 1
-    session.modified = True  # Ensure session changes are saved
-    print(f"Updated attempt count for {concept_name}: {session['concept_attempts'][concept_name]}")
-
     log_interaction("AI", concept_name, ai_response)
 
-    ai_response_filename = get_audio_filename('ai_response', interaction_id)
+    ai_response_filename = get_audio_filename('ai_response', interaction_id, concept_name)
     audio_response_path = os.path.join(app.config['AI_AUDIO_FOLDER'], ai_response_filename)
     generate_audio(ai_response, audio_response_path)
 
     if not os.path.exists(audio_response_path):
         print("Error: AI audio file not created!")  
         return jsonify({'error': 'AI audio generation failed.'})
-
-    # Check if this was the third attempt and include a flag in the response
-    should_move_to_next = current_attempt_count >= 2  # This is the third attempt (index 2)
     
     ai_audio_url = f"/uploads/ai_audio/{ai_response_filename}"
     return jsonify({
         'response': ai_response,
         'ai_audio_url': ai_audio_url,
         'user_transcript': user_message,
-        'should_move_to_next': should_move_to_next,
-        'attempt_count': current_attempt_count + 1
+        'attempt_count': session['concept_attempts'][concept_name]
     })
 
 def generate_response(user_message, concept_name, golden_answer, attempt_count):
@@ -942,17 +1196,21 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
     """
 
     if attempt_count == 0:
-        user_prompt += "\nThis is the user's first attempt at explaining this concept. If the explanation is correct, communicate this to the user. If it is not correct, provide general feedback and a broad hint to guide the user."
+        user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide general feedback and a broad hint to guide the user."
     elif attempt_count == 1:
-        user_prompt += "\nThis is the user's second attempt at explaining this concept. If the explanation is correct, communicate this to the user. If it is not correct, provide more specific feedback and highlight key elements the user missed."
-    elif attempt_count >= 2:
-        user_prompt += "\nThis is the user's third or final attempt at explaining this concept. If the explanation is correct, communicate this to the user. If it is not correct, provide the correct explanation in a supportive way, and EXPLICITLY tell them to move on to the next concept by saying 'Please move on to the next concept now.'"
+        user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide more specific feedback and highlight key elements the user missed."
+    elif attempt_count == 2:
+        user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide the correct explanation, as the user has made multiple attempts."
+    else:
+        user_prompt += "\nLet the user know they have completed three self-explanation attempts. Instruct them to stop here and tell them to continue with the next concept."
 
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": base_prompt},
-                      {"role": "user", "content": user_prompt}],
+            messages=[
+                {"role": "developer", "content": base_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
             max_tokens=200,
             temperature=0.7,
         )
@@ -962,62 +1220,114 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
     except Exception as e:
         return f"Error generating AI response: {str(e)}"
 
-@app.route('/change_concept', methods=['POST'])
-def change_concept():
-    """Handle notification from frontend when user changes concepts/slides"""
-    data = request.get_json()
-    new_concept = data.get('concept_name')
+def generate_audio(text, file_path):
+    """Generate speech (audio) from the provided text using gTTS with temporary file handling."""
+    try:
+        # Create temporary file first
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+            tts = gTTS(text=text, lang='en', slow=False)
+            tts.save(temp_file.name)
+            
+            # Verify temp file was created successfully
+            if os.path.exists(temp_file.name) and os.path.getsize(temp_file.name) > 0:
+                # Move temp file to final destination
+                shutil.move(temp_file.name, file_path)
+                print(f"Audio file successfully saved: {file_path}")
+                return True
+            else:
+                cleanup_audio_file(temp_file.name)
+                return False
+                
+    except Exception as e:
+        print(f"Error generating audio: {str(e)}")
+        return False
+        
+# @app.route('/uploads/<folder>/<filename>')
+# def serve_audio(folder, filename):
+#     """Serve the audio files from the uploads folder."""
+#     print(f"Serving audio from folder: {folder}, file: {filename}")
     
-    if not new_concept:
-        return jsonify({'error': 'No concept name provided'}), 400
+#     full_path = os.path.join(app.config['UPLOAD_FOLDER'], folder, filename)
+#     exists = os.path.exists(full_path)
+#     print(f"Looking for file at: {full_path} - Exists: {exists}")
     
-    log_interaction("SYSTEM", new_concept, f"User navigated to concept: {new_concept}")
-    
-    session['current_concept'] = new_concept
-    session.modified = True
-    
-    return jsonify({'status': 'success', 'current_concept': new_concept})
-    
-@app.route('/uploads/<folder>/<filename>')
-def serve_audio(folder, filename):
-    """Serve the audio files from the uploads folder."""
-    print(f"Serving audio from folder: {folder}, file: {filename}")
-    
-    full_path = os.path.join(app.config['UPLOAD_FOLDER'], folder, filename)
-    exists = os.path.exists(full_path)
-    print(f"Looking for file at: {full_path} - Exists: {exists}")
-    
-    return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], folder), filename)
+#     return send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], folder), filename)
     
 @app.route('/pdf')
 def serve_pdf():
     return send_from_directory('resources', 'Univariate Analysis.pdf')
 
+@app.route('/uploads/<folder>/<filename>')
+def serve_audio(folder, filename):
+    """Serve the audio files from the uploads folder."""
+    try:
+        print(f"Serving audio from folder: {folder}, file: {filename}")
+        
+        full_path = os.path.join(app.config['UPLOAD_FOLDER'], folder, filename)
+        if not os.path.exists(full_path):
+            print(f"File not found: {full_path}")
+            return jsonify({'error': 'Audio file not found'}), 404
+            
+        # Add proper MIME type
+        return send_from_directory(
+            os.path.join(app.config['UPLOAD_FOLDER'], folder),
+            filename,
+            mimetype='audio/wav' if filename.endswith('.wav') else 'audio/mpeg'
+        )
+    except Exception as e:
+        print(f"Error serving audio: {str(e)}")
+        return jsonify({'error': 'Error serving audio file'}), 500
+
 @app.route('/set_trial_type', methods=['POST'])
 def set_trial_type():
-    """Set the trial type (Trial_1, Trial_2, or Test) via POST request from frontend."""
-    data = request.get_json()
-    trial_type = data.get('trial_type', 'Trial_1')
+    """Set the trial type and participant ID for the session."""
+    try:
+        data = request.get_json()
+        print("Received data:", data)  # Debug print
+        
+        trial_type = data.get('trial_type', 'Trial_1')
+        participant_id = data.get('participant_id')
 
-    valid_types = ["Trial_1", "Trial_2", "Test"]
-    if trial_type not in valid_types:
-        return jsonify({"error": "Invalid trial type"}), 400
+        if not participant_id:
+            print("Missing participant ID")  # Debug print
+            return jsonify({
+                "error": "Participant ID is required",
+                "received_data": data
+            }), 400
 
-    old_trial_type = session.get('trial_type', 'None')
+        valid_types = ["Trial_1", "Trial_2", "Test"]
+        if trial_type not in valid_types:
+            print(f"Invalid trial type: {trial_type}")  # Debug print
+            return jsonify({
+                "error": "Invalid trial type",
+                "received_data": data
+            }), 400
+        old_trial_type = session.get('trial_type', 'None')
 
-    session['trial_type'] = trial_type
-    session['interaction_id'] = get_interaction_id()
-    session['concept_attempts'] = {}
+        interaction_id = get_interaction_id(participant_id)
 
-    initialize_log_file(session['interaction_id'], trial_type)
+        session['trial_type'] = trial_type
+        session['participant_id'] = participant_id
+        session['interaction_id'] = interaction_id
+        session['concept_attempts'] = {}
 
-    log_interaction("SYSTEM", None, f"Trial type changed from {old_trial_type} to {trial_type}")
+        initialize_log_file(interaction_id, participant_id, trial_type)
 
-    return jsonify({
-        'status': 'success',
-        'trial_type': trial_type,
-        'interaction_id': session['interaction_id']
-    })
+        log_interaction("SYSTEM", None, f"Trial type changed from {old_trial_type} to {trial_type} for participant {participant_id}")
+
+        print(f"Successfully set trial type for participant {participant_id}")  # Debug print
+
+        return jsonify({
+            'status': 'success',
+            'trial_type': trial_type,
+            'interaction_id': interaction_id
+        })
+    except Exception as e:
+        print(f"Error in set_trial_type: {str(e)}")  # Debug print
+        return jsonify({
+            "error": f"Server error: {str(e)}",
+            "type": "server_error"
+        }), 500
 
 if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
