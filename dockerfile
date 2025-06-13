@@ -20,8 +20,8 @@ COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir git+https://github.com/openai/whisper.git
+    pip install --no-cache-dir torch==2.0.1 torchaudio==2.0.2 torchvision==0.15.2 && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
