@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     portaudio19-dev \
     python3-pyaudio \
     espeak \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
@@ -19,7 +20,8 @@ COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
 # Copy the rest of the application
 COPY . .
