@@ -1,16 +1,11 @@
 {
-    "concepts": [
-        {
-            "name": "Univariate Analysis",
-            "golden_answer": "Univariate analysis examines a single variable to describe its characteristics and identify patterns in data."
-        },
-        {
-            "name": "Measures of Central Tendency",
-            "golden_answer": "Measures of central tendency, like mean, median, and mode, help summarize the data."
-        },
-        {
-            "name": "Measures of Dispersion",
-            "golden_answer": "Measures of dispersion, like variance, standard deviation, quantiles, and range, indicate how spread out the values are. This type of analysis is essential in statistics and research to understand data distributions and make informed comparisons between variables."
-        }
-    ]
+    "Correlation": {
+        "golden_answer": "Correlation describes the strength and direction of a relationship between two variables, ranging from -1 to 1. A value close to 1 indicates a strong positive relationship, while a value close to -1 indicates a strong negative one. Importantly, correlation does not imply causation. It only shows that two variables change together. A third variable may influence both, which is why identifying extraneous variables is essential."
+    },
+    "Confounders": {
+        "golden_answer": "Confounders are variables that influence both the independent and dependent variables, creating a spurious association. They can lead to incorrect conclusions about causality. Identifying and controlling for confounders is crucial in research to ensure accurate interpretation of relationships between variables."
+    },
+    "Moderators": {
+        "golden_answer": "Moderators are variables that affect the strength or direction of the relationship between two other variables. They can either strengthen, weaken, or reverse the relationship. Understanding moderators helps in identifying when and for whom a particular relationship holds true."
+    }
 }
