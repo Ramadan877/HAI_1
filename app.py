@@ -103,18 +103,71 @@ except Exception as e:
     logger.error(f"Failed to load Whisper model: {str(e)}")
     model = None
 
-whisper_model = None
+# whisper_model = None
+
+# def get_whisper_model():
+#     global whisper_model
+#     if whisper_model is None:
+#         try:
+#             print("Loading Whisper model...")
+#             whisper_model = whisper.load_model("tiny")
+#             print("Whisper model loaded successfully")
+#         except Exception as e:
+#             print(f"Failed to load Whisper model: {str(e)}")
+#     return whisper_model
+
+# Replace the Whisper model loading code with this:
+import os
+import torch
 
 def get_whisper_model():
+    try:
+        # Set environment variables for memory optimization
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
+        torch.set_num_threads(1)  # Limit CPU threads
+        
+        # Load the tiny model
+        model = whisper.load_model("tiny", device="cpu")
+        return model
+    except Exception as e:
+        print(f"Error loading Whisper model: {str(e)}")
+        return None
+
+# Initialize model as None
+whisper_model = None
+
+def get_model():
     global whisper_model
     if whisper_model is None:
-        try:
-            print("Loading Whisper model...")
-            whisper_model = whisper.load_model("tiny")
-            print("Whisper model loaded successfully")
-        except Exception as e:
-            print(f"Failed to load Whisper model: {str(e)}")
+        whisper_model = get_whisper_model()
     return whisper_model
+
+# Update the speech_to_text function
+def speech_to_text(audio_file_path):
+    """Convert audio to text using OpenAI Whisper API or local fallback."""
+    try:
+        with open(audio_file_path, "rb") as audio_file:
+            transcript = openai.Audio.transcribe(
+                model="whisper-1",
+                file=audio_file
+            )
+        return transcript.text
+    except Exception as e:
+        print(f"Error using OpenAI Whisper API: {str(e)}")
+        print("Falling back to local Whisper model...")
+        
+        try:
+            model = get_model()
+            if model:
+                # Use CPU and limit memory usage
+                with torch.no_grad():
+                    result = model.transcribe(audio_file_path, fp16=False)
+                return result["text"]
+            return "Model not available"
+        except Exception as e2:
+            print(f"Error using local Whisper model: {str(e2)}")
+            return "Your audio input could not be processed."
+
 
 @lru_cache(maxsize=32)
 def get_cached_audio(text):
@@ -140,25 +193,25 @@ def cached_transcribe(audio_file_path_hash):
         return result["text"]
     return "Transcription failed."
 
-def speech_to_text(audio_file_path):
-    """Convert audio to text using OpenAI Whisper API or local fallback."""
-    try:
-        with open(audio_file_path, "rb") as audio_file:
-            transcript = openai.Audio.transcribe(
-                model="whisper-1",
-                file=audio_file
-            )
-        return transcript.text
-    except Exception as e:
-        print(f"Error using OpenAI Whisper API: {str(e)}")
-        print("Falling back to local Whisper model...")
+# def speech_to_text(audio_file_path):
+#     """Convert audio to text using OpenAI Whisper API or local fallback."""
+#     try:
+#         with open(audio_file_path, "rb") as audio_file:
+#             transcript = openai.Audio.transcribe(
+#                 model="whisper-1",
+#                 file=audio_file
+#             )
+#         return transcript.text
+#     except Exception as e:
+#         print(f"Error using OpenAI Whisper API: {str(e)}")
+#         print("Falling back to local Whisper model...")
         
-        try:
-            result = model.transcribe(audio_file_path)
-            return result["text"]
-        except Exception as e2:
-            print(f"Error using local Whisper model: {str(e2)}")
-            return "Your audio input could not be processed."
+#         try:
+#             result = model.transcribe(audio_file_path)
+#             return result["text"]
+#         except Exception as e2:
+#             print(f"Error using local Whisper model: {str(e2)}")
+#             return "Your audio input could not be processed."
 
 def get_interaction_id(participant_id=None):
     """Generate a unique interaction ID based on timestamp."""

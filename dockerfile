@@ -39,11 +39,11 @@ RUN mkdir -p uploads/concept_audio uploads/User\ Data
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
-# Add memory optimization flags
 ENV PYTHONMALLOC=malloc
 ENV PYTHONHASHSEED=0
-# Set Whisper model size
-ENV WHISPER_MODEL=tiny
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
 
 # Expose port
 EXPOSE 10000
