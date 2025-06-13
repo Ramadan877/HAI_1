@@ -2,7 +2,7 @@ services:
   - type: web
     name: hai-app
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: ./build.sh
     startCommand: python app.py
     envVars:
       - key: PYTHON_VERSION
