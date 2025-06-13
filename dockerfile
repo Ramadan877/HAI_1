@@ -33,7 +33,7 @@ ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 
 # Expose port
-EXPOSE 5000
+EXPOSE 10000
 
 # Run the application
 CMD ["python", "app.py"]
