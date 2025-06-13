@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y \
     python3-pyaudio \
     espeak \
     git \
+    libav-tools \
+    libavcodec-extra \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
