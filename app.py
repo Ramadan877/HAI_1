@@ -110,7 +110,7 @@ def get_whisper_model():
     if whisper_model is None:
         try:
             print("Loading Whisper model...")
-            whisper_model = whisper.load_model("small")
+            whisper_model = whisper.load_model("tiny")
             print("Whisper model loaded successfully")
         except Exception as e:
             print(f"Failed to load Whisper model: {str(e)}")
