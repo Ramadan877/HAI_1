@@ -1,0 +1,6 @@
+python3.11
+build-essential
+ffmpeg
+libsndfile1
+portaudio19-dev
+python3-pyaudio

@@ -2,8 +2,10 @@ services:
   - type: web
     name: hai-app
     env: python
-    buildCommand: ./build.sh
-    startCommand: python app.py
+    buildCommand: |
+      apt-get update && apt-get install -y python3.11
+      ./build.sh
+    startCommand: python3.11 app.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
