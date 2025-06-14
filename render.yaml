@@ -6,10 +6,6 @@ services:
     envVars:
       - key: PORT
         value: 10000
-      - key: PYTORCH_CUDA_ALLOC_CONF
-        value: max_split_size_mb:128
-      - key: OMP_NUM_THREADS
-        value: "1"
-      - key: MKL_NUM_THREADS
-        value: "1"
-    plan: standard  # This gives you 1GB RAM
+    plan: standard  # This gives you 1GB RAM instead of 512MB
+    # Or use:
+    # plan: premium  # This gives you 2GB RAM

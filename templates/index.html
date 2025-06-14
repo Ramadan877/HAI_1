@@ -7,8 +7,6 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
     <script src="{{ url_for('static', filename='js/screenRecorder.js') }}"></script>
-    <link rel="stylesheet" href="static/styles.css">
-    <script src="static/js/screenRecorder.js"></script>
 </head> 
 <body>
     <div class="start-overlay" id="start-overlay">
@@ -67,9 +65,16 @@
             <div class="chat-container" id="chat-container"></div>
 
             <div class="input-bar">
+                <button class="action-btn delete-btn" id="delete-btn">
+                    <i class="fas fa-trash"></i>
+                </button>
                 <canvas id="voice-visualizer"></canvas>
                 <button class="action-btn" id="record-btn">
-                    <i class="fas fa-microphone"></i>                    </button>
+                    <i class="fas fa-microphone"></i>
+                </button>
+                <button class="action-btn pause-btn" id="pause-btn" style="display: none;">
+                    <i class="fas fa-pause"></i>
+                </button>
             </div>
             
             <div class="loading-indicator" id="loading-indicator">
@@ -93,6 +98,8 @@
             const modal = document.getElementById('chat-modal');
             const closeModal = document.getElementById('close-modal');
             const recordBtn = document.getElementById('record-btn');
+            document.getElementById('pause-btn').addEventListener('click', togglePause);
+            document.getElementById('delete-btn').addEventListener('click', deleteRecording);
             const chatContainer = document.getElementById('chat-container');
             const loadingIndicator = document.getElementById('loading-indicator');
             const visualizer = document.getElementById('voice-visualizer');
@@ -114,8 +121,9 @@
             let isRecording = false;
             let appStarted = false;
             let isSubmitting = false;
-            let mediaRecorder;
+            let isPaused = false;
             let audioChunks = [];
+            let mediaRecorder = null;
             let isAnimating = false;
             let waves = [];
             let isResizing = false;
@@ -130,6 +138,39 @@
             scale = 1.5,
             visualizerCanvas = document.getElementById('pdf-canvas'),
             visualizerCtx = visualizerCanvas.getContext('2d');
+            updateInputBarState('idle');
+
+            function updateInputBarState(state) {
+                const recordBtn = document.getElementById('record-btn');
+                const pauseBtn = document.getElementById('pause-btn');
+                const deleteBtn = document.getElementById('delete-btn');
+                const visualizer = document.getElementById('voice-visualizer');
+                const loadingIndicator = document.getElementById('loading-indicator');
+
+                switch(state) {
+                    case 'idle':
+                        recordBtn.style.display = 'flex';
+                        pauseBtn.style.display = 'none';
+                        deleteBtn.style.display = 'none';
+                        visualizer.style.display = 'none';
+                        loadingIndicator.classList.remove('active');
+                        break;
+                    case 'recording':
+                        recordBtn.style.display = 'flex';
+                        pauseBtn.style.display = 'flex';
+                        deleteBtn.style.display = 'flex';
+                        visualizer.style.display = 'block';
+                        loadingIndicator.classList.remove('active');
+                        break;
+                    case 'loading':
+                        recordBtn.style.display = 'none';
+                        pauseBtn.style.display = 'none';
+                        deleteBtn.style.display = 'none';
+                        visualizer.style.display = 'none';
+                        loadingIndicator.classList.add('active');
+                        break;
+                }
+            }
 
             window.audioContext = null;
             try {
@@ -659,9 +700,17 @@
             recordBtn.addEventListener('click', async () => {
                 if (!isRecording) {
                     try {
+                        if (mediaRecorder) {
+                            mediaRecorder = null;
+                        }
+                        if (audioContext && audioContext !== window.audioContext) {
+                            await audioContext.close();
+                        }
+
                         audioChunks = [];
                         isRecording = true;
-                        recordBtn.innerHTML = '<i class="fas fa-paper-plane"></i>';
+                        recordBtn.innerHTML = '<i class="fas fa-paper-plane"></i>';    
+                        updateInputBarState('recording');
                         activateSiriOrb();
                         siriOrb.style.boxShadow = "0 0 20px 5px rgba(255, 255, 255, 0.7)";
                         
@@ -732,6 +781,7 @@
                 }
             });
 
+        
             function visualize() {
                 const canvas = document.getElementById('voice-visualizer');
                 const WIDTH = canvas.width;
@@ -743,23 +793,25 @@
                 }
 
                 function draw() {
-                    animationId = requestAnimationFrame(draw);
+                    if (!isPaused) {
+                        animationId = requestAnimationFrame(draw);
 
-                    analyser.getByteFrequencyData(dataArray); 
+                        analyser.getByteFrequencyData(dataArray); 
 
-                    canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+                        canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
 
-                    const barWidth = (WIDTH / dataArray.length) * 2.5; 
-                    let x = 0;
+                        const barWidth = (WIDTH / dataArray.length) * 2.5; 
+                        let x = 0;
 
-                    for (let i = 0; i < dataArray.length; i++) {
-                        let barHeight = dataArray[i] / 255 * HEIGHT * 0.9; 
-                        if (barHeight < 2) barHeight = 2;
+                        for (let i = 0; i < dataArray.length; i++) {
+                            let barHeight = dataArray[i] / 255 * HEIGHT * 0.9; 
+                            if (barHeight < 2) barHeight = 2;
 
-                        canvasCtx.fillStyle = '#4fd1c5';
-                        canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+                            canvasCtx.fillStyle = '#4fd1c5';
+                            canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
 
-                        x += barWidth + 1;
+                            x += barWidth + 1;
+                        }
                     }
                 }
 
@@ -788,13 +840,13 @@
                     mediaRecorder.stop();
                 } catch (err) {
                     console.error('Error stopping MediaRecorder:', err);
-                    resetRecordingState();
+                    updateInputBarState('idle');
                     return;
                 }
 
                 mediaRecorder.onstop = async () => {
                     try {
-                        loadingIndicator.classList.add('active');
+                        updateInputBarState('loading');  
                         
                         if (audioChunks.length === 0) {
                             throw new Error('No audio data recorded');
@@ -806,7 +858,7 @@
                         const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
                         
                         await submitMessage(null, audioBlob);
-                        
+
                     } catch (error) {
                         console.error('Error processing audio:', error);
                         alert('Error processing audio: ' + error.message);
@@ -866,6 +918,11 @@
                         throw new Error(data.error);
                     }
 
+                    document.getElementById('pause-btn').style.display = 'none';
+                    document.getElementById('delete-btn').style.display = 'none';
+                    document.getElementById('record-btn').style.display = 'flex';
+                    document.getElementById('record-btn').innerHTML = '<i class="fas fa-microphone"></i>';
+
                     const userMessages = document.querySelectorAll('.user-message');
                     const lastUserMessage = userMessages[userMessages.length - 1];
                     if (lastUserMessage) {
@@ -890,13 +947,17 @@
                         console.log('AI Audio URL:', aiAudioUrl); // Debug print
                         displayAudioMessage(aiAudioUrl, 'ai', data.response);
                         activateSiriOrb();
+
+                        updateInputBarState('idle');
                     } else {
                         console.error('No AI audio URL in response');
+                        updateInputBarState('idle');
                     }
                     
                     return data;
                 } catch (error) {
                     console.error('Error in submitMessage:', error);
+                    updateInputBarState('idle');
                     throw error;
                 }
             }
@@ -918,9 +979,106 @@
                 });
             }
 
+            function togglePause() {
+                if (!mediaRecorder) {
+                    console.warn('No media recorder available');
+                    return;
+                }
+                
+                try {
+                    if (isPaused) {
+                        mediaRecorder.resume();
+                        isPaused = false;
+                        document.getElementById('pause-btn').innerHTML = '<i class="fas fa-pause"></i>';
+                        console.log('Recording resumed');
+                        if (analyser) {
+                            visualize();
+                        }
+                    } else {
+                        mediaRecorder.pause();
+                        isPaused = true;
+                        document.getElementById('pause-btn').innerHTML = '<i class="fas fa-play"></i>';
+                        console.log('Recording paused');
+
+                        if (animationId) {
+                            cancelAnimationFrame(animationId);
+                            animationId = null;
+                        }
+                        const canvas = document.getElementById('voice-visualizer');
+                        const canvasCtx = canvas.getContext('2d');
+                        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    }
+                    
+                    logInteractionEvent('RECORDING', { 
+                        action: isPaused ? 'paused' : 'resumed',
+                        timestamp: new Date().toISOString()
+                    });
+                } catch (error) {
+                    console.error('Error toggling pause:', error);
+                    alert('Error pausing/resuming recording');
+                }
+            }
+
+            document.getElementById('pause-btn').addEventListener('click', togglePause);
+
+            function deleteRecording() {
+                console.log('Delete recording called');
+                
+                try {
+                    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                        console.log('Stopping media recorder');
+                        mediaRecorder.stop();
+                    }
+                    
+                    audioChunks = [];
+                    isRecording = false;
+                    isPaused = false;
+                    
+                    const recordBtn = document.getElementById('record-btn');
+                    recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                    
+                    if (animationId) {
+                        cancelAnimationFrame(animationId);
+                        animationId = null;
+                    }
+                    
+                    const canvas = document.getElementById('voice-visualizer');
+                    const canvasCtx = canvas.getContext('2d');
+                    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    
+                    if (audioContext && audioContext !== window.audioContext) {
+                        audioContext.close().catch(console.error);
+                    }
+                    
+                    mediaRecorder = null;
+                    
+                    updateInputBarState('idle');
+                    
+                    const siriOrb = document.querySelector('.siri-orb');
+                    if (siriOrb) {
+                        siriOrb.style.boxShadow = "none";
+                    }
+                    
+                    logInteractionEvent('RECORDING', { 
+                        action: 'deleted',
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    console.log('Recording deleted successfully');
+                } catch (error) {
+                    console.error('Error deleting recording:', error);
+                    alert('Error deleting recording');
+                }
+            }
+
+            document.getElementById('delete-btn').addEventListener('click', deleteRecording);
+
             function resetRecordingState() {
                 isRecording = false;
+                isPaused = false;
                 recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                document.getElementById('pause-btn').style.display = 'none';
+                document.getElementById('delete-btn').style.display = 'none';
                 recordBtn.style.display = 'flex';
                 visualizer.style.display = 'none';
                 siriOrb.style.boxShadow = "none";

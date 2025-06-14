@@ -39,6 +39,9 @@ executor = ThreadPoolExecutor(max_workers=5)
 UPLOAD_FOLDER = 'uploads/'
 CONCEPT_AUDIO_FOLDER = os.path.join(UPLOAD_FOLDER, 'concept_audio')
 USER_AUDIO_FOLDER = os.path.join(UPLOAD_FOLDER, 'User Data')
+STATIC_FOLDER = 'static'
+ALLOWED_EXTENSIONS = {'mp3', 'wav', 'ogg', 'webm'}
+
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['CONCEPT_AUDIO_FOLDER'] = CONCEPT_AUDIO_FOLDER
@@ -809,9 +812,9 @@ def shutdown():
 
 if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
-    # app.run(port=5000)
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(port=5000)
+    # port = int(os.environ.get('PORT', 10000))
+    # app.run(host='0.0.0.0', port=port)
 
 
 
