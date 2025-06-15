@@ -1,53 +1,37 @@
-# Use Python 3.11 slim as base image
-FROM python:3.11-slim
+# Use a smaller, more optimized base image for Python applications
+# `slim-buster` is a good balance between size and compatibility
+FROM python:3.9-slim-buster
 
-# Set working directory
+# Set environment variables for non-interactive apt-get installations
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies:
+# - ffmpeg: Required by pydub and Whisper for audio processing
+# - build-essential: Needed for compiling some Python packages (e.g., those with C extensions)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ffmpeg \
+    build-essential && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+# Set the working directory inside the container
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    ffmpeg \
-    libsndfile1 \
-    portaudio19-dev \
-    python3-pyaudio \
-    espeak \
-    git \
-    libavcodec-extra \
-    libavformat-dev \
-    libavutil-dev \
-    libswscale-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first to leverage Docker cache
+# Copy only the requirements file first to leverage Docker's build cache
+# If requirements.txt doesn't change, this step won't re-run
 COPY requirements.txt .
 
-# Install Python dependencies with memory optimization
-RUN pip install --no-cache-dir --upgrade pip && \
-    # Install torch with CPU-only version to reduce memory usage
-    pip install --no-cache-dir torch==2.0.1+cpu torchaudio==2.0.2+cpu torchvision==0.15.2+cpu -f https://download.pytorch.org/whl/torch_stable.html && \
-    # Install other requirements
-    pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+# `--no-cache-dir` prevents pip from storing its cache, reducing image size
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
+# Copy the rest of your application code into the container
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p uploads/concept_audio uploads/User\ Data
+# Expose the port that your Flask application listens on
+# Railway will use this, but it's good practice for Docker images
+EXPOSE 5000
 
-# Set environment variables
-ENV FLASK_APP=app.py
-ENV FLASK_ENV=production
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONMALLOC=malloc
-ENV PYTHONHASHSEED=0
-ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
-ENV OMP_NUM_THREADS=1
-ENV MKL_NUM_THREADS=1
-
-# Expose port
-EXPOSE 10000
-
-# Run the application with memory optimization
-CMD ["python", "-O", "app.py"]
-
+# Define the command to run your application when the container starts
+CMD ["python", "app.py"]
