@@ -1,6 +1,7 @@
 let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
+let isSaving = false; // Add this flag to prevent multiple save attempts
 
 async function startScreenRecording() {
     try {
@@ -26,12 +27,14 @@ async function startScreenRecording() {
         
         mediaRecorder.onstop = async () => {
             console.log('Recording stopped, chunks collected:', recordedChunks.length);
-            if (recordedChunks.length > 0) {
+            if (recordedChunks.length > 0 && !isSaving) {
+                isSaving = true;
                 const blob = new Blob(recordedChunks, { type: 'video/webm' });
                 console.log('Blob created, size:', blob.size);
                 await saveScreenRecording(blob);
+                isSaving = false;
             } else {
-                console.error('No recording chunks available');
+                console.error('No recording chunks available or already saving');
             }
             recordedChunks = [];
             
@@ -77,20 +80,12 @@ async function saveScreenRecording(blob) {
             return;
         }
         
-        const trialFolderMap = {
-            'Trial_1': 'main_task_1',
-            'Trial_2': 'main_task_2',
-            'Test': 'test_task'
-        };
-        
-        const trialFolderName = trialFolderMap[currentTrialType] || currentTrialType.toLowerCase();
-        
-        formData.append('trial_type', trialFolderName);
+        formData.append('trial_type', currentTrialType);
         formData.append('participant_id', participantId);
         
         console.log('Saving screen recording for:', {
             participant_id: participantId,
-            trial_type: trialFolderName,
+            trial_type: currentTrialType,
             blob_size: blob.size
         });
         
@@ -100,7 +95,8 @@ async function saveScreenRecording(blob) {
         });
         
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errorText = await response.text();
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
         }
         
         const result = await response.json();
@@ -111,21 +107,27 @@ async function saveScreenRecording(blob) {
 }
 
 async function cleanupScreenRecording() {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive' && !isSaving) {
         try {
             console.log('Cleaning up recording...');
-            mediaRecorder.stop();
             
-            await new Promise((resolve) => {
-                mediaRecorder.onstop = () => {
+            // Create a promise that resolves when the recording is saved
+            const savePromise = new Promise((resolve) => {
+                const originalOnStop = mediaRecorder.onstop;
+                mediaRecorder.onstop = async () => {
                     if (recordedChunks.length > 0) {
                         const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                        saveScreenRecording(blob).then(resolve);
-                    } else {
-                        resolve();
+                        await saveScreenRecording(blob);
                     }
+                    if (originalOnStop) {
+                        originalOnStop();
+                    }
+                    resolve();
                 };
             });
+            
+            mediaRecorder.stop();
+            await savePromise;
             
             recordedChunks = [];
             
@@ -141,14 +143,61 @@ async function cleanupScreenRecording() {
     }
 }
 
+// Enhanced beforeunload handler with synchronous save attempt
 window.addEventListener('beforeunload', async (event) => {
-    if (isRecording) {
+    if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
+        console.log('Page unloading, attempting to save recording...');
+        
+        // Try to save synchronously if possible
+        try {
+            if (recordedChunks.length > 0) {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                
+                // Use sendBeacon for more reliable delivery during page unload
+                const formData = new FormData();
+                formData.append('screen_recording', blob, 'screen_recording.webm');
+                formData.append('trial_type', window.currentTrialType);
+                formData.append('participant_id', window.participantId);
+                
+                const success = navigator.sendBeacon('/save_screen_recording', formData);
+                console.log('SendBeacon result:', success);
+            }
+        } catch (error) {
+            console.error('Error during beforeunload save:', error);
+        }
+        
+        // Also try the async cleanup
         await cleanupScreenRecording();
     }
 });
 
+// Enhanced visibility change handler
 document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'hidden' && isRecording) {
+        console.log('Page hidden, saving recording...');
         await cleanupScreenRecording();
+    }
+});
+
+// Add unload event handler as backup
+window.addEventListener('unload', async (event) => {
+    if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
+        console.log('Page unloading (unload event), saving recording...');
+        
+        try {
+            if (recordedChunks.length > 0) {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                
+                // Use sendBeacon for reliable delivery
+                const formData = new FormData();
+                formData.append('screen_recording', blob, 'screen_recording.webm');
+                formData.append('trial_type', window.currentTrialType);
+                formData.append('participant_id', window.participantId);
+                
+                navigator.sendBeacon('/save_screen_recording', formData);
+            }
+        } catch (error) {
+            console.error('Error during unload save:', error);
+        }
     }
 });

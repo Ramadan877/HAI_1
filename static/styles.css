@@ -513,7 +513,7 @@
         }
 
         .user-message {
-            background: linear-gradient(135deg, rgba(37, 99, 235, 0.85) 0%, rgba(59, 130, 246, 0.85) 100%);
+            background: linear-gradient(135deg, #4fd1c5 0%, #38b2ac 100%); 
             backdrop-filter: blur(10px);
             border: 1px solid var(--message-border);
             color: var(--text-light);
@@ -553,7 +553,7 @@
 
         .user-message .transcript-text {
             background-color: rgba(0, 0, 0, 0.15);
-            color: rgba(255, 255, 255, 0.9);
+            color: #000000;
         }
 
         .ai-message .transcript-text {
@@ -664,7 +664,7 @@
             left: 0;
             height: 12px;
             width: 12px;
-            background-color: var(--primary-color);
+            background: #4fd1c5;
             box-shadow: 0 0 5px rgba(37, 99, 235, 0.5);
             border-radius: 50%;
             z-index: 3;
@@ -919,7 +919,7 @@
             width: 42px;
             height: 42px;
             border-radius: 50%;
-            background: var(--primary-color);
+            background: #4fd1c5;
             color: var(--text-light);
             transition: all 0.3s ease;            
             border: none;
@@ -928,7 +928,7 @@
         }
 
         .action-btn:hover {
-            background: var(--secondary-color);
+            background: #38b2ac;
             transform: scale(1.05);
         }
 
@@ -948,18 +948,18 @@
 
         .pause-btn {
             display: none;
-            background: #3182ce;
+            background: #4fd1c5;
             width: 36px; 
             height: 36px;
         }
 
         .pause-btn:hover {
-            background: #2c5282;
+            background: #38b2ac;
         }
 
         .loading-indicator {
             position: absolute;
-            bottom: 0;
+            bottom: 20px;
             left: 0;
             right: 0;
             height: 60px;

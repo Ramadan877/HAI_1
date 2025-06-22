@@ -81,7 +81,7 @@ def check_paths():
     paths = [
         app.config['UPLOAD_FOLDER'],
         app.config['USER_AUDIO_FOLDER'],
-        app.config['AI_AUDIO_FOLDER'],
+        # app.config['AI_AUDIO_FOLDER'],
         app.config['CONCEPT_AUDIO_FOLDER'],
         STATIC_FOLDER
     ]
@@ -249,6 +249,9 @@ def generate_audio(text, file_path):
 @app.route('/save_screen_recording', methods=['POST'])
 def save_screen_recording():
     try:
+        app.logger.info(f"Received screen recording request. Files: {list(request.files.keys())}")
+        app.logger.info(f"Form data: {list(request.form.keys())}")
+
         if 'screen_recording' not in request.files:
             app.logger.error('No screen recording file provided')
             return jsonify({'error': 'No screen recording file provided'}), 400
@@ -278,11 +281,7 @@ def save_screen_recording():
         
         if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
             app.logger.info(f'Screen recording saved successfully: {filepath}')
-            return jsonify({
-                'status': 'success',
-                'message': 'Screen recording saved successfully',
-                'filepath': filepath
-            })
+            return 'OK', 200
         else:
             app.logger.error('Failed to save screen recording - file not created or empty')
             return jsonify({'error': 'Failed to save screen recording'}), 500
@@ -484,6 +483,7 @@ def get_concept_audio(concept_name):
     try:
         interaction_id = session.get('interaction_id', get_interaction_id())
         participant_id = session.get('participant_id')
+        trial_type = session.get('trial_type')
         
         if not participant_id:
             return jsonify({
@@ -491,7 +491,7 @@ def get_concept_audio(concept_name):
                 'message': 'Participant ID not found in session'
             }), 400
             
-        folders = get_participant_folder(participant_id)
+        folders = get_participant_folder(participant_id, trial_type)
         safe_concept = secure_filename(concept_name)
         
         concept_audio_filename = get_audio_filename(f'concept_{safe_concept}', interaction_id)
@@ -503,10 +503,15 @@ def get_concept_audio(concept_name):
         
         log_interaction("AI", concept_name, concept_intro_text)
 
+        # return send_from_directory(
+        #     os.path.join(folders['ai_audio_folder']),
+        #     concept_audio_filename,
+        #     mimetype='audio/wav'
+        # )
         return send_from_directory(
-            os.path.join(folders['ai_audio_folder']),
+            folders['trial_folder'],  
             concept_audio_filename,
-            mimetype='audio/wav'
+            mimetype='audio/mpeg'
         )
     except Exception as e:
         print(f"Error in get_concept_audio: {str(e)}")
@@ -687,9 +692,9 @@ def serve_audio(folder_type, participant_id, trial_type, filename):
             base_path = CONCEPT_AUDIO_FOLDER
         else:
             trial_folder_map = {
-                'trial_1': 'main_task_1',
-                'trial_2': 'main_task_2',
-                'test': 'test_task'
+                'main_task_1': 'main_task_1',
+                'main_task_2': 'main_task_2', 
+                'test_task': 'test_task'
             }
             trial_folder_name = trial_folder_map.get(trial_type.lower(), trial_type.lower())
             base_path = os.path.join(USER_AUDIO_FOLDER, participant_id, trial_folder_name)
@@ -812,35 +817,8 @@ def shutdown():
 
 if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
-    # app.run(port=5000)
+    app.run(port=5000)
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
