@@ -690,7 +690,7 @@
 
         .progress {
             height: 100%;
-            background: #4fd1c5;
+            background: rgba(15, 23, 42, 0.85);
             border-radius: 2px;
             width: 0%;
             position: relative;

@@ -1,0 +1,13 @@
+Session started for participant 2 with trial type Test
+[2025-06-25 15:39:03] SYSTEM (Correlation): User opened the chat window
+[2025-06-25 15:39:03] SYSTEM (Correlation): User navigated to slide [3] with the concept: [Correlation]
+[2025-06-25 15:39:14] AI (Introduction): Hello, let us begin the self-explanation journey! We'll be exploring the concept of Extraneous Variables, focusing on Correlation, Confounders, and Moderators. Please go through each concept and explain what you understand about them in your own words!
+[2025-06-25 15:39:15] SYSTEM (Correlation): User started recording at 2025-06-25T13:39:15.184Z
+[2025-06-25 15:39:18] SYSTEM (Correlation): User stopped recording at 2025-06-25T13:39:18.261Z
+[2025-06-25 15:39:18] SYSTEM (Correlation): User submitted recording (size: 31073 bytes, duration: unknowns) at 2025-06-25T13:39:18.297Z
+[2025-06-25 15:40:07] User (Correlation):  One, two, three, four.
+[2025-06-25 15:40:07] AI (Correlation): It looks like your explanation is a bit brief and doesn’t quite capture the details of the concept we're discussing. Remember, correlation involves the strength and direction of a relationship between two variables and ranges from -1 to 1. 
+
+Try to think about how you would explain what a strong positive or negative correlation means, and why correlation does not imply causation. You can also consider the importance of other variables that might influence the relationship. 
+
+Take another shot at it! You're on the right track, and I believe you can refine your explanation further.

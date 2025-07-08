@@ -1,0 +1,13 @@
+Session started for participant 5 with trial type Trial_2
+[2025-06-25 15:41:47] SYSTEM (Moderators): User navigated to slide [7] with the concept: [Moderators]
+[2025-06-25 15:41:47] SYSTEM (Moderators): User opened the chat window
+[2025-06-25 15:41:47] SYSTEM (Moderators): User navigated to slide [7] with the concept: [Moderators]
+[2025-06-25 15:41:55] AI (Introduction): Hello, let us begin the self-explanation journey! We'll be exploring the concept of Extraneous Variables, focusing on Correlation, Confounders, and Moderators. Please go through each concept and explain what you understand about them in your own words!
+[2025-06-25 15:41:56] SYSTEM (Moderators): User started recording at 2025-06-25T13:41:56.585Z
+[2025-06-25 15:41:59] SYSTEM (Moderators): User stopped recording at 2025-06-25T13:41:59.598Z
+[2025-06-25 15:41:59] SYSTEM (Moderators): User submitted recording (size: 37835 bytes, duration: unknowns) at 2025-06-25T13:41:59.626Z
+[2025-06-25 15:42:36] User (Moderators):  one two three four
+[2025-06-25 15:42:36] AI (Moderators): It looks like your explanation of the concept is a bit unclear. Can you try to elaborate a bit more on what moderators are and how they function in the context of relationships between variables? Think about how they might influence the strength or direction of those relationships. I'm here to help you refine it!
+[2025-06-25 15:42:38] SYSTEM (Moderators): User started audio playback at 0.00 seconds
+[2025-06-25 15:42:38] SYSTEM (Moderators): User TRANSCRIPT
+[2025-06-25 15:42:40] SYSTEM (Moderators): User paused audio playback at 1.99 seconds
