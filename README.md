@@ -19,7 +19,7 @@ This repository contains a Human-AI Voice Interaction system designed for resear
 Open your terminal and run:
 
 ```bash
-git clone https://github.com/your-username/HAI.git
+git clone https://github.com/Ramadan877/HAI_1.git
 cd HAI
 ```
 
