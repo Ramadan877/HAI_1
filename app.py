@@ -22,13 +22,6 @@ import atexit
 import signal
 from functools import lru_cache
 
-try:
-    from pydub import AudioSegment
-    PYDUB_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: pydub not available: {e}")
-    PYDUB_AVAILABLE = False
-    AudioSegment = None
     
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
