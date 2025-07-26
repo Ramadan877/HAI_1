@@ -789,7 +789,6 @@ def shutdown():
         app.logger.error(f"Error during shutdown: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Add a new route to serve static files from resources
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory('static', filename)
@@ -798,18 +797,10 @@ def serve_static(filename):
 def serve_resource(filename):
     return send_from_directory('resources', filename)
 
-# if __name__ == '__main__':
-#     startup_interaction_id = get_interaction_id()
-#     app.run(port=5000)
-#     port = int(os.environ.get('PORT', 5000))
-
-
-
-
-# Vercel Deployment
 if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
-    app.run(debug=False)
+    app.run(port=5000)
+    port = int(os.environ.get('PORT', 5000))
 
-# For Vercel serverless deployment
-app.wsgi_app = app.wsgi_app
+
+
