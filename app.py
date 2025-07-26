@@ -1,5 +1,6 @@
 from flask import Flask, request, render_template, jsonify, session, send_from_directory
 from werkzeug.utils import secure_filename
+from flask_cors import CORS  # Add this import
 import openai
 import os
 import re
@@ -33,6 +34,7 @@ client = openai.OpenAI(
 )
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 app.secret_key = 'supersecretkey'
 executor = ThreadPoolExecutor(max_workers=5)
 
@@ -53,26 +55,14 @@ os.makedirs(USER_AUDIO_FOLDER, exist_ok=True)
 
 def get_participant_folder(participant_id, trial_type):
     """Get or create the participant's folder structure."""
-    trial_folder_map = {
-        'Trial_1': 'main_task_1',
-        'Trial_2': 'main_task_2',
-        'Test': 'test_task'
-    }
-    
-    trial_folder_name = trial_folder_map.get(trial_type, trial_type.lower())
-    
     participant_folder = os.path.join(USER_AUDIO_FOLDER, str(participant_id))
-    trial_folder = os.path.join(participant_folder, trial_folder_name)
-    screen_recordings_folder = os.path.join(trial_folder, 'Screen Recordings')
+    screen_recordings_folder = os.path.join(participant_folder, 'Screen Recordings')
 
     os.makedirs(participant_folder, exist_ok=True)
-    os.makedirs(trial_folder, exist_ok=True)
     os.makedirs(screen_recordings_folder, exist_ok=True)
 
-    
     return {
         'participant_folder': participant_folder,
-        'trial_folder': trial_folder,
         'screen_recordings_folder': screen_recordings_folder
     }
 
@@ -81,7 +71,6 @@ def check_paths():
     paths = [
         app.config['UPLOAD_FOLDER'],
         app.config['USER_AUDIO_FOLDER'],
-        # app.config['AI_AUDIO_FOLDER'],
         app.config['CONCEPT_AUDIO_FOLDER'],
         STATIC_FOLDER
     ]
@@ -177,7 +166,7 @@ def initialize_log_file(interaction_id, participant_id=None, trial_type="Trial_1
         
     folders = get_participant_folder(participant_id, trial_type)
     log_filename = f"conversation_log_{participant_id}.txt"
-    log_file_path = os.path.join(folders['trial_folder'], log_filename)
+    log_file_path = os.path.join(folders['participant_folder'], log_filename)
 
     try:
         with open(log_file_path, "w", encoding="utf-8") as file:
@@ -208,7 +197,7 @@ def log_interaction(speaker, concept_name, message):
             return False
             
         folders = get_participant_folder(participant_id, trial_type)
-        log_file_path = os.path.join(folders['trial_folder'], f"conversation_log_{participant_id}.txt")
+        log_file_path = os.path.join(folders['participant_folder'], f"conversation_log_{participant_id}.txt")
         
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         with open(log_file_path, "a", encoding="utf-8") as file:
@@ -268,7 +257,7 @@ def save_screen_recording():
             
         folders = get_participant_folder(participant_id, trial_type)
         
-        screen_recordings_dir = os.path.join(folders['trial_folder'], 'Screen Recordings')
+        screen_recordings_dir = folders['screen_recordings_folder']
         os.makedirs(screen_recordings_dir, exist_ok=True)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -296,10 +285,6 @@ def home():
     session['interaction_id'] = get_interaction_id()
     session['trial_type'] = request.args.get('trial', 'Trial_1')        
     session['concept_attempts'] = {}
-
-    initialize_log_file(session['interaction_id'], session['trial_type'])
-    
-    initialize_log_file(session['interaction_id'], None, session['trial_type'])
     
     return render_template('index.html')
 
@@ -435,7 +420,7 @@ def get_intro_audio():
         intro_text = "Hello, let us begin the self-explanation journey! We'll be exploring the concept of Extraneous Variables, focusing on Correlation, Confounders, and Moderators. Please go through each concept and explain what you understand about them in your own words!"
         
         intro_audio_filename = f"intro_{participant_id}.mp3"
-        intro_audio_path = os.path.join(folders['trial_folder'], intro_audio_filename)
+        intro_audio_path = os.path.join(folders['participant_folder'], intro_audio_filename)
 
         max_retries = 3
         for attempt in range(max_retries):
@@ -444,13 +429,8 @@ def get_intro_audio():
                     log_interaction("AI", "Introduction", intro_text)
                     
                     if os.path.exists(intro_audio_path) and os.path.getsize(intro_audio_path) > 0:
-                        trial_folder_map = {
-                            'Trial_1': 'main_task_1',
-                            'Trial_2': 'main_task_2',
-                            'Test': 'test_task'
-                        }
-                        trial_folder_name = trial_folder_map.get(trial_type, trial_type.lower())
-                        intro_audio_url = f"/uploads/user_audio/{participant_id}/{trial_folder_name}/{intro_audio_filename}"
+                        # all files are directly under the participant folder
+                        intro_audio_url = f"/uploads/User Data/{participant_id}/{intro_audio_filename}"
                         return jsonify({
                             'status': 'success',
                             'intro_audio_url': intro_audio_url,
@@ -495,7 +475,7 @@ def get_concept_audio(concept_name):
         safe_concept = secure_filename(concept_name)
         
         concept_audio_filename = get_audio_filename(f'concept_{safe_concept}', interaction_id)
-        concept_audio_path = os.path.join(folders['ai_audio_folder'], concept_audio_filename)
+        concept_audio_path = os.path.join(folders['participant_folder'], concept_audio_filename)
         
         concept_intro_text = f"Now, let's explore the concept of {concept_name}. Please explain what you understand about this concept in your own words!"
         
@@ -503,13 +483,8 @@ def get_concept_audio(concept_name):
         
         log_interaction("AI", concept_name, concept_intro_text)
 
-        # return send_from_directory(
-        #     os.path.join(folders['ai_audio_folder']),
-        #     concept_audio_filename,
-        #     mimetype='audio/wav'
-        # )
         return send_from_directory(
-            folders['trial_folder'],  
+            folders['participant_folder'],  
             concept_audio_filename,
             mimetype='audio/mpeg'
         )
@@ -564,7 +539,7 @@ def submit_message():
             if audio_file:
                 audio_filename = get_audio_filename('user', participant_id, attempt_count + 1)
                 folders = get_participant_folder(participant_id, trial_type)
-                audio_path = os.path.join(folders['trial_folder'], audio_filename)
+                audio_path = os.path.join(folders['participant_folder'], audio_filename)
                 audio_file.save(audio_path)
                 
                 try:
@@ -589,7 +564,7 @@ def submit_message():
         session['concept_attempts'] = concept_attempts
         
         ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
-        ai_audio_path = os.path.join(folders['trial_folder'], ai_audio_filename)
+        ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
         
         if generate_audio(response, ai_audio_path):
             log_interaction("User", concept_name, user_transcript)
@@ -684,20 +659,33 @@ def serve_pdf():
     """Serve the PDF file for the current concept."""
     return send_from_directory('resources', 'Extraneous Variables.pdf')
 
+@app.route('/uploads/User Data/<participant_id>/<filename>')
+def serve_audio_new(participant_id, filename):
+    """Serve the audio files from the participant's folder (new structure without trial subfolder)."""
+    try:
+        base_path = os.path.join(USER_AUDIO_FOLDER, participant_id)
+        
+        if not os.path.exists(os.path.join(base_path, filename)):
+            print(f"File not found: {os.path.join(base_path, filename)}")
+            return jsonify({'error': 'Audio file not found'}), 404
+            
+        return send_from_directory(
+            base_path,
+            filename,
+            mimetype='audio/mpeg'
+        )
+    except Exception as e:
+        print(f"Error serving audio: {str(e)}")
+        return jsonify({'error': 'Error serving audio file'}), 500
+
 @app.route('/uploads/<folder_type>/<participant_id>/<trial_type>/<filename>')
 def serve_audio(folder_type, participant_id, trial_type, filename):
-    """Serve the audio files from the participant's folder."""
+    """Serve the audio files from the participant's folder (legacy route for backward compatibility)."""
     try:
         if folder_type == 'concept_audio':
             base_path = CONCEPT_AUDIO_FOLDER
         else:
-            trial_folder_map = {
-                'main_task_1': 'main_task_1',
-                'main_task_2': 'main_task_2', 
-                'test_task': 'test_task'
-            }
-            trial_folder_name = trial_folder_map.get(trial_type.lower(), trial_type.lower())
-            base_path = os.path.join(USER_AUDIO_FOLDER, participant_id, trial_folder_name)
+            base_path = os.path.join(USER_AUDIO_FOLDER, participant_id)
             
         if not os.path.exists(os.path.join(base_path, filename)):
             print(f"File not found: {os.path.join(base_path, filename)}")
@@ -742,17 +730,6 @@ def set_trial_type():
         session['interaction_id'] = interaction_id
         session['concept_attempts'] = {}
 
-        folders = get_participant_folder(participant_id, trial_type)
-        
-        log_file_path = os.path.join(folders['trial_folder'], f"conversation_log_{participant_id}.txt")
-        with open(log_file_path, "w", encoding="utf-8") as f:
-            f.write(f"Session started for participant {participant_id} with trial type {trial_type}\n")
-
-        return jsonify({
-            'status': 'success',
-            'message': f'Trial type set to {trial_type}'
-        })
-
         initialize_log_file(interaction_id, participant_id, trial_type)
 
         log_interaction("SYSTEM", None, f"Trial type changed from {old_trial_type} to {trial_type} for participant {participant_id}")
@@ -779,19 +756,16 @@ def cleanup_recordings():
         for participant_id in os.listdir(USER_AUDIO_FOLDER):
             participant_dir = os.path.join(USER_AUDIO_FOLDER, participant_id)
             if os.path.isdir(participant_dir):
-                for trial_type in os.listdir(participant_dir):
-                    trial_dir = os.path.join(participant_dir, trial_type)
-                    if os.path.isdir(trial_dir):
-                        screen_recordings_dir = os.path.join(trial_dir, 'Screen Recordings')
-                        if os.path.exists(screen_recordings_dir):
-                            for filename in os.listdir(screen_recordings_dir):
-                                if filename.endswith('.webm'):
-                                    filepath = os.path.join(screen_recordings_dir, filename)
-                                    if os.path.getsize(filepath) > 0:
-                                        app.logger.info(f"Verified recording: {filepath}")
-                                    else:
-                                        app.logger.warning(f"Removing incomplete recording: {filepath}")
-                                        os.remove(filepath)
+                screen_recordings_dir = os.path.join(participant_dir, 'Screen Recordings')
+                if os.path.exists(screen_recordings_dir):
+                    for filename in os.listdir(screen_recordings_dir):
+                        if filename.endswith('.webm'):
+                            filepath = os.path.join(screen_recordings_dir, filename)
+                            if os.path.getsize(filepath) > 0:
+                                app.logger.info(f"Verified recording: {filepath}")
+                            else:
+                                app.logger.warning(f"Removing incomplete recording: {filepath}")
+                                os.remove(filepath)
         
         app.logger.info("Cleanup completed successfully")
     except Exception as e:
@@ -815,6 +789,15 @@ def shutdown():
         app.logger.error(f"Error during shutdown: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# Add a new route to serve static files from resources
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('static', filename)
+
+@app.route('/resources/<path:filename>')
+def serve_resource(filename):
+    return send_from_directory('resources', filename)
+
 if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
     app.run(port=5000)
@@ -822,3 +805,10 @@ if __name__ == '__main__':
 
 
 
+
+# Vercel Deployment
+if __name__ == '__main__':
+    app.run(debug=False)
+
+def handler(request):
+    return app(request.environ, lambda status, headers: None)

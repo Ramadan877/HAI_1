@@ -602,6 +602,7 @@
                 logInteractionEvent('CHAT_WINDOW', { action: 'opened' });
                             
             if (!introPlayed) {
+                introPlayed = true;
                 fetch('/get_intro_audio')
                     .then(response => {
                         if (!response.ok) {
@@ -612,17 +613,14 @@
                     .then(data => {
                         if (data.status === 'success' && data.intro_audio_url) {
                             displayAudioMessage(data.intro_audio_url, 'ai', data.intro_text);
-                            introPlayed = true;
                         } else {
                             console.error('Error getting intro audio:', data.message || 'Unknown error');
                             displayAudioMessage(null, 'ai', "Welcome! I'm your AI assistant for this session. We'll be exploring the concept of Extraneous Variables, focusing on Correlation, Confounders, and Moderators. Please go through each concept and explain what you understand about them in your own words!");
-                            introPlayed = true;
                         }
                     })
                     .catch(error => {
                         console.error('Error fetching intro audio:', error);
                         displayAudioMessage(null, 'ai', "Welcome! I'm your AI assistant for this session. We'll be exploring the concept of Extraneous Variables, focusing on Correlation, Confounders, and Moderators. Please go through each concept and explain what you understand about them in your own words!");
-                        introPlayed = true;
                     });
             }
             
@@ -936,14 +934,7 @@
 
 
                     if (data.ai_audio_url) {
-                        const trialFolderMap = {
-                            'Trial_1': 'main_task_1',
-                            'Trial_2': 'main_task_2',
-                            'Test': 'test_task'
-                        };
-                        const trialFolderName = trialFolderMap[currentTrialType] || currentTrialType.toLowerCase();
-                        
-                        const aiAudioUrl = `/uploads/User Data/${currentParticipantId}/${trialFolderName}/${data.ai_audio_url}`;
+                        const aiAudioUrl = `/uploads/User Data/${currentParticipantId}/${data.ai_audio_url}`;
                         console.log('AI Audio URL:', aiAudioUrl); // Debug print
                         displayAudioMessage(aiAudioUrl, 'ai', data.response);
                         activateSiriOrb();

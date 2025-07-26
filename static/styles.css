@@ -537,28 +537,37 @@
         
         
         .transcript-text {
-            margin-top: 8px;
-            padding: 8px 12px;
-            background: rgba(15, 23, 42, 0.85);  /* Match modal background */
-            backdrop-filter: blur(10px);
-            border: 1px solid var(--message-border);
-            color: var(--text-light);
-            border-radius: 12px;
-            font-size: 13px;
+            margin-bottom: 8px;
+            font-size: 14px;
             line-height: 1.4;
-            width: 100%;
-            box-sizing: border-box;
-            transition: all 0.3s ease;
+            color: var(--text-light);
+            opacity: 0.9;
+            word-wrap: break-word;
+            max-width: 100%;
         }
 
-        .user-message .transcript-text {
-            background-color: rgba(0, 0, 0, 0.15);
-            color: #000000;
+        .text-message {
+            margin-bottom: 8px;
+            font-size: 14px;
+            line-height: 1.4;
+            color: var(--text-light);
+            opacity: 0.9;
+            word-wrap: break-word;
+            max-width: 100%;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent-color);
         }
 
-        .ai-message .transcript-text {
-            background-color: rgba(0, 0, 0, 0.15);
-            color: rgba(255, 255, 255, 0.9);
+        .ai-message .text-message {
+            background: rgba(59, 130, 246, 0.1);
+            border-left-color: var(--primary-color);
+        }
+
+        .user-message .text-message {
+            background: rgba(139, 92, 246, 0.1);
+            border-left-color: var(--accent-color);
         }
         
         .audio-container {
