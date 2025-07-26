@@ -798,17 +798,18 @@ def serve_static(filename):
 def serve_resource(filename):
     return send_from_directory('resources', filename)
 
-if __name__ == '__main__':
-    startup_interaction_id = get_interaction_id()
-    app.run(port=5000)
-    port = int(os.environ.get('PORT', 5000))
+# if __name__ == '__main__':
+#     startup_interaction_id = get_interaction_id()
+#     app.run(port=5000)
+#     port = int(os.environ.get('PORT', 5000))
 
 
 
 
 # Vercel Deployment
 if __name__ == '__main__':
+    startup_interaction_id = get_interaction_id()
     app.run(debug=False)
 
-def handler(request):
-    return app(request.environ, lambda status, headers: None)
+# For Vercel serverless deployment
+app.wsgi_app = app.wsgi_app
