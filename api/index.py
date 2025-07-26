@@ -1,19 +1,23 @@
 from flask import Flask
 
-# Create a simple test app first
 app = Flask(__name__)
 
 @app.route('/')
-def hello():
-    return "Hello from Vercel!"
+def index():
+    return 'Hello from Flask on Vercel!'
+
+@app.route('/test')
+def test():
+    return 'Test route working!'
 
 @app.route('/<path:path>')
 def catch_all(path):
-    return f"Path: {path}"
+    return f'You requested: {path}'
 
-# For Vercel
-def handler(request):
-    return app
+# This is crucial for Vercel
+def handler(request, response):
+    return app(request.environ, response)
 
-# Export for Vercel
-app = app
+# For local development
+if __name__ == '__main__':
+    app.run(debug=True)
