@@ -2,11 +2,16 @@ FROM python:3.11.8-slim
 
 WORKDIR /app
 
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsndfile1 \
     git \
     wget \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -18,13 +23,16 @@ COPY . .
 
 RUN mkdir -p uploads/concept_audio uploads/User\ Data static resources
 
+# Expose port
+EXPOSE $PORT
+
+# Set Flask environment variables  
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
-ENV PYTHONUNBUFFERED=1
 
-EXPOSE 5000
-
+# Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:5000/ || exit 1
+  CMD curl -f http://localhost:$PORT/ || exit 1
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--timeout", "120", "app:app"]
+# Run the application
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 120 app:app

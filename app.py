@@ -267,9 +267,7 @@ def initialize_session_in_db():
 
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-client = openai.OpenAI(
-    api_key=OPENAI_API_KEY
-)
+openai.api_key = OPENAI_API_KEY
 
 executor = ThreadPoolExecutor(max_workers=5)
 
@@ -374,11 +372,11 @@ def speech_to_text(audio_file_path):
     """Convert audio to text using OpenAI Whisper API or local fallback."""
     try:
         with open(audio_file_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
+            transcript = openai.Audio.transcribe(
                 model="whisper-1",
                 file=audio_file
             )
-        return transcript.text
+        return transcript["text"]
     except Exception as e:
         print(f"Error using OpenAI Whisper API: {str(e)}")
         print("Falling back to local Whisper model...")
@@ -781,10 +779,10 @@ def submit_message():
                 
                 try:
                     with open(audio_path, "rb") as audio_file:
-                        user_transcript = client.audio.transcriptions.create(
+                        user_transcript = openai.Audio.transcribe(
                             model="whisper-1",
                             file=audio_file
-                        ).text
+                        )["text"]
                 except Exception as e:
                     print(f"OpenAI transcription failed, falling back to local model: {str(e)}")
                     user_transcript = speech_to_text(audio_path)
@@ -887,10 +885,10 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
     ]
 
     try:
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "developer", "content": base_prompt},
+                {"role": "system", "content": base_prompt},
                 {"role": "user", "content": user_prompt}
             ],
             max_tokens=200,
