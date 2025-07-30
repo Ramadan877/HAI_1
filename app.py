@@ -266,8 +266,7 @@ def initialize_session_in_db():
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 client = openai.OpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url="https://api.openai.com/v1"
+    api_key=OPENAI_API_KEY
 )
 
 executor = ThreadPoolExecutor(max_workers=5)
