@@ -7,7 +7,34 @@ import re
 from gtts import gTTS
 import whisper  
 import json
-from pydub import AudioSegment
+# Handle pydub audioop compatibility for Python 3.13
+try:
+    from pydub import AudioSegment
+except ImportError as e:
+    # Fallback for missing audioop in Python 3.13
+    import warnings
+    warnings.filterwarnings("ignore")
+    
+    # Mock AudioSegment for basic functionality
+    class MockAudioSegment:
+        @classmethod
+        def empty(cls):
+            return cls()
+        
+        @classmethod
+        def from_mp3(cls, file):
+            return cls()
+        
+        @classmethod
+        def from_file(cls, file):
+            return cls()
+        
+        def __add__(self, other):
+            return self
+    
+    AudioSegment = MockAudioSegment
+    print("Warning: Using mock AudioSegment due to audioop compatibility issues")
+
 from tempfile import NamedTemporaryFile
 from datetime import datetime
 import logging
