@@ -1,4 +1,4 @@
-# Human-AI Voice Interaction (HAI) -- Version 1
+# Human-AI Voice Interaction (HAI) — Version 1
 
 This repository contains a Human-AI Voice Interaction system designed for research and educational purposes. The system allows users to interact with an AI tutor using voice, focusing on self-explanation tasks around statistical concepts.
 
