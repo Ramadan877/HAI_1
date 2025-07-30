@@ -7,6 +7,8 @@ import re
 from gtts import gTTS
 import whisper  
 import json
+import warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 # Handle pydub audioop compatibility for Python 3.13
 try:
     from pydub import AudioSegment
@@ -372,7 +374,7 @@ def speech_to_text(audio_file_path):
     """Convert audio to text using OpenAI Whisper API or local fallback."""
     try:
         with open(audio_file_path, "rb") as audio_file:
-            transcript = openai.Audio.transcribe(
+            transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file
             )
@@ -779,7 +781,7 @@ def submit_message():
                 
                 try:
                     with open(audio_path, "rb") as audio_file:
-                        user_transcript = openai.Audio.transcribe(
+                        user_transcript = client.audio.transcriptions.create(
                             model="whisper-1",
                             file=audio_file
                         ).text
