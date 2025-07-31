@@ -4,27 +4,31 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsndfile1 \
     git \
     wget \
+    curl \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 RUN pip install --no-cache-dir --upgrade pip
+
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p uploads/concept_audio uploads/User\ Data static
-RUN chmod -R 755 resources
+RUN mkdir -p uploads/concept_audio uploads/User\ Data static \
+    && chmod -R 755 resources \
+    && chmod +x app.py
 
 EXPOSE $PORT
-
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
 
