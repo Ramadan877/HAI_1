@@ -1,0 +1,1475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Chat with AI</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
+    <script src="{{ url_for('static', filename='js/screenRecorder.js') }}"></script>
+</head> 
+<body>
+    <div class="start-overlay" id="start-overlay">
+        <div class="start-trial-selector">
+            <div class="participant-id-container">
+                <label for="participant-id">Participant ID:</label>
+                <input type="text" id="participant-id" class="participant-id-input" required>
+            </div>
+            <h2 class="start-trial-title">Select Task Type</h2>
+            <div class="start-trial-buttons">
+                <button id="start-trial1-btn" class="start-trial-btn" onclick="startWithTrial('Trial_1')">Task 1</button>
+                <button id="start-trial2-btn" class="start-trial-btn" onclick="startWithTrial('Trial_2')">Task 2</button>
+                <button id="start-test-btn" class="start-trial-btn" onclick="startWithTrial('Test')">Test Mode</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="ready-overlay" id="ready-overlay">
+        <div class="ready-content">
+            <button id="start-interaction-btn" class="start-interaction-btn">
+                Start
+            </button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="pdf-container">
+            <canvas id="pdf-canvas"></canvas>
+            <div id="loading-spinner" class="loading-spinner"></div>
+        </div>
+
+        <div class="page-controls">
+            <button class="page-btn" id="prev-page"><i class="fas fa-chevron-left"></i></button>
+            <div class="page-counter">
+                <span id="current-page-num">1</span> / <span id="total-pages">-</span>
+            </div>
+            <button class="page-btn" id="next-page"><i class="fas fa-chevron-right"></i></button>
+        </div>
+    </div>
+
+    <div class="avatar-container" id="chat-avatar">
+        <div class="siri-orb">
+            <div class="blob blob1"></div>
+            <div class="blob blob2"></div>
+            <div class="blob blob3"></div>
+        </div>
+    </div>
+
+    <div class="modal" id="chat-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2></h2>
+                    <span class="close-btn" id="close-modal">&times;</span>
+            </div>
+
+            <div class="chat-container" id="chat-container"></div>
+
+            <div class="input-bar">
+                <button class="action-btn delete-btn" id="delete-btn">
+                    <i class="fas fa-trash"></i>
+                </button>
+                <canvas id="voice-visualizer"></canvas>
+                <button class="action-btn" id="record-btn">
+                    <i class="fas fa-microphone"></i>
+                </button>
+                <button class="action-btn pause-btn" id="pause-btn" style="display: none;">
+                    <i class="fas fa-pause"></i>
+                </button>
+            </div>
+            
+            <div class="loading-indicator" id="loading-indicator">
+                <div class="loading-orbit">
+                    <div class="orbit-circle"></div>
+                    <div class="orbit-circle"></div>
+                    <div class="orbit-circle"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const url = '/resources/Extraneous Variables.pdf';
+            const readyOverlay = document.getElementById('ready-overlay');
+            const selectedTaskType = document.getElementById('selected-task-type');
+            const startInteractionBtn = document.getElementById('start-interaction-btn');
+            const startOverlay = document.getElementById('start-overlay');
+            const avatar = document.getElementById('chat-avatar');
+            const modal = document.getElementById('chat-modal');
+            const closeModal = document.getElementById('close-modal');
+            const recordBtn = document.getElementById('record-btn');
+            document.getElementById('pause-btn').addEventListener('click', togglePause);
+            document.getElementById('delete-btn').addEventListener('click', deleteRecording);
+            const chatContainer = document.getElementById('chat-container');
+            const loadingIndicator = document.getElementById('loading-indicator');
+            const visualizer = document.getElementById('voice-visualizer');
+            const siriOrb = document.querySelector('.siri-orb');
+            const blobs = document.querySelectorAll('.blob');
+            const userMessages = document.querySelectorAll('.user-message');
+            const lastUserMessage = userMessages[userMessages.length - 1];
+            if (lastUserMessage) {
+                const transcriptDiv = lastUserMessage.querySelector('.transcript-text');
+                if (transcriptDiv) {
+                    transcriptDiv.textContent = data.user_transcript;
+                }
+            }
+
+            let participantId = null;
+            let trialType = null;
+            let attemptCount = 0;
+            let currentTrialType = null;
+            let isRecording = false;
+            let appStarted = false;
+            let isSubmitting = false;
+            let isPaused = false;
+            let audioChunks = [];
+            let mediaRecorder = null;
+            let isAnimating = false;
+            let waves = [];
+            let isResizing = false;
+            let resizeStartX, resizeStartY, resizeStartWidth, resizeStartHeight, resizeStartLeft, resizeStartTop;
+            let waveCount = 0;
+            let currentConcept = "Default";
+            let introPlayed = false; 
+            let pdfDoc = null,
+            pageNum = 1,
+            pageRendering = false,
+            pageNumPending = null,
+            scale = 1.5,
+            visualizerCanvas = document.getElementById('pdf-canvas'),
+            visualizerCtx = visualizerCanvas.getContext('2d');
+            updateInputBarState('idle');
+
+            function updateInputBarState(state) {
+                const recordBtn = document.getElementById('record-btn');
+                const pauseBtn = document.getElementById('pause-btn');
+                const deleteBtn = document.getElementById('delete-btn');
+                const visualizer = document.getElementById('voice-visualizer');
+                const loadingIndicator = document.getElementById('loading-indicator');
+
+                switch(state) {
+                    case 'idle':
+                        recordBtn.style.display = 'flex';
+                        pauseBtn.style.display = 'none';
+                        deleteBtn.style.display = 'none';
+                        visualizer.style.display = 'none';
+                        loadingIndicator.classList.remove('active');
+                        break;
+                    case 'recording':
+                        recordBtn.style.display = 'flex';
+                        pauseBtn.style.display = 'flex';
+                        deleteBtn.style.display = 'flex';
+                        visualizer.style.display = 'block';
+                        loadingIndicator.classList.remove('active');
+                        break;
+                    case 'loading':
+                        recordBtn.style.display = 'none';
+                        pauseBtn.style.display = 'none';
+                        deleteBtn.style.display = 'none';
+                        visualizer.style.display = 'none';
+                        loadingIndicator.classList.add('active');
+                        break;
+                }
+            }
+
+            window.audioContext = null;
+            try {
+                window.AudioContext = window.AudioContext || window.webkitAudioContext;
+                window.audioContext = new AudioContext();
+            } catch (e) {
+                console.error('Web Audio API is not supported in this browser', e);
+            }
+
+            window.startWithTrial = function(trialType) {
+                if (appStarted || isSubmitting) return false;
+                
+                const participantId = document.getElementById('participant-id').value.trim();
+                if (!participantId) {
+                    alert('Please enter a Participant ID');
+                    return false;
+                }
+                
+                isSubmitting = true;
+                const buttons = document.querySelectorAll('.start-trial-btn');
+                buttons.forEach(btn => btn.disabled = true);
+                
+                window.participantId = participantId;
+                window.currentTrialType = trialType;
+                console.log('Starting trial with:', {
+                    trial_type: trialType,
+                    participant_id: participantId
+                });
+
+                fetch('/set_trial_type', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        trial_type: trialType,
+                        participant_id: participantId
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(response.status === 400 ? 'Missing participant ID' : 'Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.status === 'success') {
+                        currentTrialType = trialType;
+                        console.log(`Starting with trial type: ${trialType}, Participant ID: ${participantId}`);
+                        
+                        if (typeof cleanupScreenRecording === 'function') {
+                            cleanupScreenRecording().then(() => {
+                                if (typeof startScreenRecording === 'function') {
+                                    startScreenRecording();
+                                }
+                            });
+                        }
+                        
+                        startOverlay.style.opacity = "0";
+                        setTimeout(() => {
+                            startOverlay.style.display = "none";
+                            readyOverlay.classList.add('show');
+                        }, 500);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error starting trial: ' + error.message);
+                })
+                .finally(() => {
+                    isSubmitting = false;
+                    buttons.forEach(btn => btn.disabled = false);
+                });
+
+                return false;
+            };
+
+            startInteractionBtn.addEventListener('click', function() {
+                if (!currentTrialType) return;
+                
+                let initialPage = 1;
+                switch(currentTrialType) {
+                    case 'Test':
+                        initialPage = 3;
+                        break;
+                    case 'Trial_1':
+                        initialPage = 5;
+                        break;
+                    case 'Trial_2':
+                        initialPage = 7;
+                        break;
+                }
+                
+                pageNum = initialPage;
+                if (pdfDoc) {
+                    queueRenderPage(initialPage);
+                }
+                
+                if (typeof changeTrial === 'function') {
+                    changeTrial(currentTrialType, document.getElementById('participant-id').value);
+                }
+
+                    appStarted = true;
+
+                readyOverlay.classList.remove('show');
+                setTimeout(() => {
+                    readyOverlay.style.display = "none";
+                    showModal();
+                }, 300);
+                
+                animateBlobs();
+            });
+
+            function renderPage(num) {
+                pageRendering = true;
+
+                pdfDoc.getPage(num).then(function(page) {
+                    const pdfContainer = document.getElementById('pdf-container');
+                    const containerWidth = pdfContainer.clientWidth;
+                    const containerHeight = pdfContainer.clientHeight;
+                    
+                    const viewport = page.getViewport({ scale: 1.0 });
+                    const scaleWidth = containerWidth / viewport.width * 0.85;  
+                    const scaleHeight = containerHeight / viewport.height * 0.85;
+                    const optimalScale = Math.min(scaleWidth, scaleHeight);
+                    
+                    const scaledViewport = page.getViewport({ scale: optimalScale });
+                    
+                    canvas.height = scaledViewport.height;
+                    canvas.width = scaledViewport.width;
+
+                    const scaleFactor = window.devicePixelRatio || 1;
+                    visualizerCanvas.width = scaledViewport.width * scaleFactor;
+                    visualizerCanvas.height = scaledViewport.height * scaleFactor;
+
+                    visualizerCtx.setTransform(scaleFactor, 0, 0, scaleFactor, 0, 0);
+
+                    const renderContext = {
+                        canvasContext: visualizerCtx,
+                        viewport: scaledViewport
+                    };
+                    
+                    const renderTask = page.render(renderContext);
+
+                    renderTask.promise.then(function() {
+                        pageRendering = false;
+
+                        if (pageNumPending !== null) {
+                            renderPage(pageNumPending);
+                            pageNumPending = null;
+                        }
+                    });
+
+                    updateModalTitle(num);
+                    
+                    const newConcept = getConceptNameForSlide(num);
+                    if (currentConcept !== newConcept) {
+                        currentConcept = newConcept;
+                        notifyConceptChange(currentConcept);
+                    }
+                });
+
+                document.getElementById('current-page-num').textContent = num;
+            }
+
+            window.addEventListener('resize', () => {
+                if (pdfDoc) {
+                    queueRenderPage(pageNum);
+                }
+            });
+
+            function updateModalTitle(pageNumber) {
+                const chatModalHeader = document.querySelector('.modal-header h2');
+                const concept = getConceptNameForSlide(pageNumber) || "Have Fun!!"; 
+                chatModalHeader.innerHTML = '<span class="concept-label">Current Concept: </span>' + concept;
+            }
+
+            function queueRenderPage(num) {
+                if (pageRendering) {
+                    pageNumPending = num;
+                } else {
+                    renderPage(num);
+                }
+            }
+
+            function onPrevPage() {
+                if (pageNum <= 1) return;
+                pageNum--;
+                queueRenderPage(pageNum);
+            }
+
+            function onNextPage() {
+                if (pageNum >= pdfDoc.numPages) return;
+                pageNum++;
+                queueRenderPage(pageNum);
+            }
+
+            function notifyConceptChange(conceptName) {
+                const slideNumber = pageNum;
+
+                attemptCount = 0;
+
+                fetch('/change_concept', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        concept_name: conceptName,
+                        slide_number: slideNumber
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Concept change notification sent:', data);
+                })
+                .catch(error => {
+                    console.error('Error notifying concept change:', error);
+                });
+            }
+            
+
+
+            function getConceptNameForSlide(slideNumber) {
+                const conceptMap = {
+                    1: "Correlation ",
+                    2: "Correlation",
+                    3: "Correlation",
+                    4: "Correlation",
+                    5: "Confounders ",
+                    6: "Confounders ",
+                    7: "Moderators  ",
+                    8: "Moderators  ",
+                    9: "Moderators  "
+                };
+                
+                const concept = conceptMap[slideNumber];
+                return concept ? concept.trim() : "Unknown Concept";
+            }
+
+            document.getElementById('prev-page').addEventListener('click', onPrevPage);
+            document.getElementById('next-page').addEventListener('click', onNextPage);
+
+            document.querySelectorAll('.slide-nav-button').forEach(button => {
+                button.addEventListener('click', function() {
+                    const targetSlide = this.getAttribute('data-target-slide');
+                    if (targetSlide) {
+                        const slideNum = parseInt(targetSlide, 10);
+                        if (!isNaN(slideNum)) {
+                            pageNum = slideNum;
+                            queueRenderPage(pageNum);
+                            
+                            const conceptName = getConceptNameForSlide(slideNum);
+                            notifyConceptChange(conceptName);
+                        }
+                    }
+                });
+            });
+
+            pdfjsLib.getDocument(url).promise.then(function(pdfDoc_) {
+                pdfDoc = pdfDoc_;
+                document.getElementById('total-pages').textContent = pdfDoc.numPages;
+                renderPage(pageNum);
+            }).catch(err => {
+                console.error('Error loading PDF:', err);
+                alert('Failed to load PDF: ' + err.message);
+            });
+
+            const canvas = document.getElementById('voice-visualizer');
+            canvas.width = 500;
+            canvas.height = 40;
+            const canvasCtx = canvas.getContext('2d');
+            let audioContext, analyser, dataArray, animationId;
+
+            const introAudioUrl = '/uploads/ai_audio/intro_message.mp3';
+
+            // Siri Animation Functions
+            function animateBlobs() {
+                blobs.forEach((blob, index) => {
+                    const speed = 2 + index * 0.5;
+                    const time = performance.now() / 1000;
+                    const x = Math.sin(time * speed) * 10;
+                    const y = Math.cos(time * (speed + 0.5)) * 10;
+                    
+                    blob.style.transform = `translate(${x}px, ${y}px) scale(${0.8 + Math.sin(time * speed) * 0.1})`;
+                });
+                
+                requestAnimationFrame(animateBlobs);
+            }
+            
+            function createWave() {
+                const wave = document.createElement('div');
+                wave.className = 'wave';
+                wave.id = `wave-${waveCount++}`;
+                avatar.appendChild(wave);
+                waves.push(wave);
+                
+                setTimeout(() => {
+                    wave.style.transition = 'all 2s cubic-bezier(0.1, 0.8, 0.1, 1)';
+                    wave.style.transform = 'scale(1.5)';
+                    wave.style.opacity = '0';
+                }, 10);
+                
+                setTimeout(() => {
+                    avatar.removeChild(wave);
+                    waves = waves.filter(w => w !== wave);
+                }, 2000);
+            }
+            
+            function activateSiriOrb() {
+                if (isAnimating) return;
+                isAnimating = true;
+                
+                createWave();
+                setTimeout(createWave, 200);
+                setTimeout(createWave, 400);
+                
+                siriOrb.style.transform = 'scale(1.1)';
+                setTimeout(() => {
+                    siriOrb.style.transform = 'scale(1)';
+                }, 300);
+                
+                blobs.forEach((blob, index) => {
+                    const delay = index * 100;
+                    setTimeout(() => {
+                        blob.style.transform = 'scale(1.2) translate(0, 0)';
+                        setTimeout(() => {
+                            blob.style.transform = 'scale(1) translate(0, 0)';
+                        }, 400);
+                    }, delay);
+                });
+                
+                setTimeout(() => {
+                    isAnimating = false;
+                }, 800);
+            }
+            
+            animateBlobs();
+
+            function initializeResize() {
+                const modal = document.getElementById('chat-modal');
+                let isResizing = false;
+                let startX;
+                let startWidth;
+                let startRight;
+                const MIN_CHATBOX_WIDTH = 450;
+
+                const resizeHandle = document.createElement('div');
+                resizeHandle.className = 'resize-handle-left';
+                modal.appendChild(resizeHandle);
+
+                resizeHandle.addEventListener('mousedown', initDrag);
+
+                function initDrag(e) {
+                    isResizing = true;
+                    startX = e.clientX;
+                    startWidth = modal.offsetWidth;
+                    startRight = window.innerWidth - (modal.offsetLeft + modal.offsetWidth);
+                    
+                    document.addEventListener('mousemove', doDrag);
+                    document.addEventListener('mouseup', stopDrag);
+                    e.preventDefault();
+                }
+
+                function doDrag(e) {
+                    if (!isResizing) return;
+
+                    const deltaX = startX - e.clientX;
+                    const newWidth = startWidth + deltaX;
+                    const finalWidth = Math.max(MIN_CHATBOX_WIDTH, newWidth);
+                    
+                    if (finalWidth <= window.innerWidth * 0.8) {
+                        const newLeft = window.innerWidth - startRight - finalWidth;
+                        
+                        modal.style.width = finalWidth + 'px';
+                        modal.style.left = newLeft + 'px';
+                    }
+                }
+
+                function stopDrag() {
+                    isResizing = false;
+                    document.removeEventListener('mousemove', doDrag);
+                    document.removeEventListener('mouseup', stopDrag);
+                }
+            }
+
+            initializeResize();
+
+            function getCurrentConcept() {
+                const concept = getConceptNameForSlide(pageNum);
+                return concept ? concept.trim() : "Unknown Concept";
+            }
+
+            const modalContent = document.querySelector('.modal-content');
+
+            function logInteractionEvent(eventType, details = {}) {
+                const currentConcept = getCurrentConcept();
+                fetch('/log_interaction_event', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        event_type: eventType,
+                        details: details,
+                        concept_name: currentConcept
+                    })
+                }).catch(error => console.error('Error logging interaction:', error));
+            }
+
+            function showModal() {
+                modal.style.display = 'block';
+                document.body.classList.add('modal-open');
+                
+                document.querySelector('.container').classList.add('chat-open');
+                document.getElementById('pdf-container').classList.add('chat-open');
+                
+                if (pdfDoc) {
+                    setTimeout(() => {
+                        queueRenderPage(pageNum);
+                    }, 300);
+                }
+
+                setTimeout(() => {
+                    modal.classList.add('show');
+                    modalContent.classList.add('active'); 
+                }, 10);
+                
+                logInteractionEvent('CHAT_WINDOW', { action: 'opened' });
+                            
+            if (!introPlayed) {
+                introPlayed = true;
+                fetch('/get_intro_audio')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.status === 'success' && data.intro_audio_url) {
+                            displayAudioMessage(data.intro_audio_url, 'ai', data.intro_text);
+                        } else {
+                            console.error('Error getting intro audio:', data.message || 'Unknown error');
+                            displayAudioMessage(null, 'ai', "Welcome! I'm your AI assistant for this session. We'll be exploring the concept of Extraneous Variables, focusing on Correlation, Confounders, and Moderators. Please go through each concept and explain what you understand about them in your own words!");
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching intro audio:', error);
+                        displayAudioMessage(null, 'ai', "Welcome! I'm your AI assistant for this session. We'll be exploring the concept of Extraneous Variables, focusing on Correlation, Confounders, and Moderators. Please go through each concept and explain what you understand about them in your own words!");
+                    });
+            }
+            
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume().then(() => {
+                        console.log('Audio context resumed');
+                    }).catch(err => {
+                        console.error('Error resuming audio context:', err);
+                    });
+            }
+    
+                
+                activateSiriOrb();
+                
+                currentConcept = getCurrentConcept();
+                console.log("Current concept set to:", currentConcept);
+                
+                notifyConceptChange(currentConcept);
+            }
+
+            function handleAudioError(audio, durationDisplay) {
+                audio.addEventListener('error', (e) => {
+                    console.error('Audio loading error:', e);
+                    durationDisplay.textContent = 'Error';
+                    if (audio.src.includes('/uploads/')) {
+                        const alternativePath = audio.src.replace('/uploads/', '/uploads/concept_audio/');
+                        audio.src = alternativePath;
+                        audio.load();
+                    }
+                });
+            }
+
+            function hideModal() {
+                modal.classList.remove('show');
+                modalContent.classList.remove('active');
+
+                document.querySelector('.container').classList.remove('chat-open');
+                document.getElementById('pdf-container').classList.remove('chat-open');
+                
+                logInteractionEvent('CHAT_WINDOW', { action: 'closed' });
+
+                if (pdfDoc) {
+                    setTimeout(() => {
+                        queueRenderPage(pageNum);
+                    }, 300);
+                }
+
+                setTimeout(() => {
+                    modal.style.display = 'none';
+                    document.body.classList.remove('modal-open');
+                }, 300); 
+                
+                stopAllAudio();
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                }
+            }
+
+            avatar.addEventListener('click', () => {
+                if (modal.classList.contains('show')) {
+                    hideModal();
+                } else {
+                    showModal();
+                }
+            });
+
+
+            closeModal.addEventListener('click', hideModal);
+
+            window.addEventListener('click', (event) => {
+                if (event.target === modal) {
+                    hideModal();
+                }
+            });
+            recordBtn.addEventListener('click', async () => {
+                if (!isRecording) {
+                    try {
+                        if (mediaRecorder) {
+                            mediaRecorder = null;
+                        }
+                        if (audioContext && audioContext !== window.audioContext) {
+                            await audioContext.close();
+                        }
+
+                        audioChunks = [];
+                        isRecording = true;
+                        recordBtn.innerHTML = '<i class="fas fa-paper-plane"></i>';    
+                        updateInputBarState('recording');
+                        activateSiriOrb();
+                        siriOrb.style.boxShadow = "0 0 20px 5px rgba(255, 255, 255, 0.7)";
+                        
+                        visualizer.style.display = 'block';
+                        recordBtn.style.display = 'flex';
+
+                        logInteractionEvent('RECORDING', { 
+                            action: 'started',
+                            timestamp: new Date().toISOString()
+                        });
+                        
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        
+                        if (!window.audioContext) {
+                            window.audioContext = new AudioContext();
+                        }
+                        
+                        audioContext = window.audioContext;
+                        analyser = audioContext.createAnalyser();
+                        const source = audioContext.createMediaStreamSource(stream);
+
+                        analyser.fftSize = 256;
+                        analyser.smoothingTimeConstant = 0.8;
+                        source.connect(analyser);
+                        dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                        const canvas = document.getElementById('voice-visualizer');
+                        canvas.width = canvas.offsetWidth * (window.devicePixelRatio || 1);
+                        canvas.height = canvas.offsetHeight * (window.devicePixelRatio || 1);
+                        canvas.style.width = canvas.offsetWidth + 'px';
+                        canvas.style.height = canvas.offsetHeight + 'px';
+
+                        mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm;codecs=opus'});
+                        
+                        mediaRecorder.ondataavailable = event => {
+                            if (event.data.size > 0) {
+                                audioChunks.push(event.data);
+                            }
+                        };
+                        
+                        mediaRecorder.onerror = (event) => {
+                            console.error('MediaRecorder error:', event);
+                            alert('Error recording audio: ' + event.error);
+                            resetRecordingState();
+                        };
+                        
+                        mediaRecorder.start();
+                        console.log("MediaRecorder started", mediaRecorder.state);
+
+                        visualize();
+                    } catch (error) {
+                        console.error('Error accessing microphone:', error);
+                        alert('Unable to access microphone. Please check permissions.');
+                        resetRecordingState();
+                    }
+                } else {
+                    recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+
+                    stopRecording();
+                    if (animationId) {
+                        cancelAnimationFrame(animationId);
+                    }
+                    
+                    recordBtn.style.display = 'flex';
+                    visualizer.style.display = 'none';
+                    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    siriOrb.style.boxShadow = "none";
+                }
+            });
+
+        
+            function visualize() {
+                const canvas = document.getElementById('voice-visualizer');
+                const WIDTH = canvas.width;
+                const HEIGHT = canvas.height;
+                const canvasCtx = canvas.getContext('2d');
+
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                }
+
+                function draw() {
+                    if (!isPaused) {
+                        animationId = requestAnimationFrame(draw);
+
+                        analyser.getByteFrequencyData(dataArray); 
+
+                        canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+
+                        const barWidth = (WIDTH / dataArray.length) * 2.5; 
+                        let x = 0;
+
+                        for (let i = 0; i < dataArray.length; i++) {
+                            let barHeight = dataArray[i] / 255 * HEIGHT * 0.9; 
+                            if (barHeight < 2) barHeight = 2;
+
+                            canvasCtx.fillStyle = '#4fd1c5';
+                            canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+
+                            x += barWidth + 1;
+                        }
+                    }
+                }
+
+                analyser.fftSize = 256; 
+                analyser.smoothingTimeConstant = 0.8; 
+                dataArray = new Uint8Array(analyser.frequencyBinCount); 
+
+                draw();
+            }
+
+            function stopRecording() {
+                if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                    console.warn('MediaRecorder not active');
+                    return;
+                }
+                
+                console.log("Stopping MediaRecorder", mediaRecorder.state);
+                isRecording = false;
+                
+                logInteractionEvent('RECORDING', { 
+                    action: 'stopped',
+                    timestamp: new Date().toISOString()
+                });
+
+                try {
+                    mediaRecorder.stop();
+                } catch (err) {
+                    console.error('Error stopping MediaRecorder:', err);
+                    updateInputBarState('idle');
+                    return;
+                }
+
+                mediaRecorder.onstop = async () => {
+                    try {
+                        updateInputBarState('loading');  
+                        
+                        if (audioChunks.length === 0) {
+                            throw new Error('No audio data recorded');
+                        }
+                        
+                        currentConcept = getCurrentConcept();
+                        console.log("Sending audio for concept:", currentConcept);
+                        
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+                        
+                        await submitMessage(null, audioBlob);
+
+                    } catch (error) {
+                        console.error('Error processing audio:', error);
+                        alert('Error processing audio: ' + error.message);
+                        recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                    } finally {
+                        loadingIndicator.classList.remove('active');
+                    }
+                };
+            }
+
+            async function submitMessage(message = null, audioBlob = null) {
+                try {
+                    const formData = new FormData();
+                    const currentConcept = getCurrentConcept();
+                    
+                    const currentParticipantId = window.participantId;
+                    const currentTrialType = window.currentTrialType;  
+                    
+                    if (!currentParticipantId || !currentTrialType) {
+                        console.error('Missing participant ID or trial type');
+                        throw new Error('Session information not found');
+                    }
+                    
+                    if (message) {
+                        formData.append('message', message);
+                    }
+                    
+                    if (audioBlob) {
+                        formData.append('audio', audioBlob);
+                        const userAudioUrl = URL.createObjectURL(audioBlob);
+                        displayAudioMessage(userAudioUrl, 'user', 'processing...');
+                        logInteractionEvent('RECORDING', { 
+                            action: 'submitted',
+                            timestamp: new Date().toISOString(),
+                            blobSize: audioBlob.size
+                        });
+                    }
+                    
+                    formData.append('concept_name', currentConcept);
+                    
+                    console.log("Sending data to server with concept:", currentConcept);
+                    
+                    const response = await fetch('/submit_message', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.message || `Server responded with status: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    console.log("Server response:", data);
+
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+
+                    document.getElementById('pause-btn').style.display = 'none';
+                    document.getElementById('delete-btn').style.display = 'none';
+                    document.getElementById('record-btn').style.display = 'flex';
+                    document.getElementById('record-btn').innerHTML = '<i class="fas fa-microphone"></i>';
+
+                    const userMessages = document.querySelectorAll('.user-message');
+                    const lastUserMessage = userMessages[userMessages.length - 1];
+                    if (lastUserMessage) {
+                        const transcriptDiv = lastUserMessage.querySelector('.transcript-text');
+                        if (transcriptDiv) {
+                            transcriptDiv.textContent = data.user_transcript || message;
+                        }
+                    }
+
+                    attemptCount = data.attempt_count;
+
+
+                    if (data.ai_audio_url) {
+                        const aiAudioUrl = `/uploads/User Data/${currentParticipantId}/${data.ai_audio_url}`;
+                        console.log('AI Audio URL:', aiAudioUrl); // Debug print
+                        displayAudioMessage(aiAudioUrl, 'ai', data.response);
+                        activateSiriOrb();
+
+                        updateInputBarState('idle');
+                    } else {
+                        console.error('No AI audio URL in response');
+                        updateInputBarState('idle');
+                    }
+                    
+                    return data;
+                } catch (error) {
+                    console.error('Error in submitMessage:', error);
+                    updateInputBarState('idle');
+                    throw error;
+                }
+            }
+
+            async function getAudioDuration(audioBlob) {
+                return new Promise((resolve) => {
+                    const audio = new Audio();
+                    audio.src = URL.createObjectURL(audioBlob);
+                    
+                    audio.addEventListener('loadedmetadata', () => {
+                        URL.revokeObjectURL(audio.src);
+                        resolve(audio.duration.toFixed(2));
+                    });
+                    
+                    audio.addEventListener('error', () => {
+                        URL.revokeObjectURL(audio.src);
+                        resolve('unknown');
+                    });
+                });
+            }
+
+            function togglePause() {
+                if (!mediaRecorder) {
+                    console.warn('No media recorder available');
+                    return;
+                }
+                
+                try {
+                    if (isPaused) {
+                        mediaRecorder.resume();
+                        isPaused = false;
+                        document.getElementById('pause-btn').innerHTML = '<i class="fas fa-pause"></i>';
+                        console.log('Recording resumed');
+                        if (analyser) {
+                            visualize();
+                        }
+                    } else {
+                        mediaRecorder.pause();
+                        isPaused = true;
+                        document.getElementById('pause-btn').innerHTML = '<i class="fas fa-play"></i>';
+                        console.log('Recording paused');
+
+                        if (animationId) {
+                            cancelAnimationFrame(animationId);
+                            animationId = null;
+                        }
+                        const canvas = document.getElementById('voice-visualizer');
+                        const canvasCtx = canvas.getContext('2d');
+                        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    }
+                    
+                    logInteractionEvent('RECORDING', { 
+                        action: isPaused ? 'paused' : 'resumed',
+                        timestamp: new Date().toISOString()
+                    });
+                } catch (error) {
+                    console.error('Error toggling pause:', error);
+                    alert('Error pausing/resuming recording');
+                }
+            }
+
+            document.getElementById('pause-btn').addEventListener('click', togglePause);
+
+            function deleteRecording() {
+                console.log('Delete recording called');
+                
+                try {
+                    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                        console.log('Stopping media recorder');
+                        mediaRecorder.stop();
+                    }
+                    
+                    audioChunks = [];
+                    isRecording = false;
+                    isPaused = false;
+                    
+                    const recordBtn = document.getElementById('record-btn');
+                    recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                    
+                    if (animationId) {
+                        cancelAnimationFrame(animationId);
+                        animationId = null;
+                    }
+                    
+                    const canvas = document.getElementById('voice-visualizer');
+                    const canvasCtx = canvas.getContext('2d');
+                    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    
+                    if (audioContext && audioContext !== window.audioContext) {
+                        audioContext.close().catch(console.error);
+                    }
+                    
+                    mediaRecorder = null;
+                    
+                    updateInputBarState('idle');
+                    
+                    const siriOrb = document.querySelector('.siri-orb');
+                    if (siriOrb) {
+                        siriOrb.style.boxShadow = "none";
+                    }
+                    
+                    logInteractionEvent('RECORDING', { 
+                        action: 'deleted',
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    console.log('Recording deleted successfully');
+                } catch (error) {
+                    console.error('Error deleting recording:', error);
+                    alert('Error deleting recording');
+                }
+            }
+
+            document.getElementById('delete-btn').addEventListener('click', deleteRecording);
+
+            function resetRecordingState() {
+                isRecording = false;
+                isPaused = false;
+                recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                document.getElementById('pause-btn').style.display = 'none';
+                document.getElementById('delete-btn').style.display = 'none';
+                recordBtn.style.display = 'flex';
+                visualizer.style.display = 'none';
+                siriOrb.style.boxShadow = "none";
+                if (audioContext && audioContext !== window.audioContext) {
+                    audioContext.close().catch(console.error);
+                }
+            }
+
+            function displayAudioMessage(audioUrl, sender, transcript) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `chat-message ${sender}-message`;
+
+                if (transcript) {
+                    const transcriptDiv = document.createElement('div');
+                    transcriptDiv.className = 'transcript-text';
+
+                    if (sender === 'ai') {
+                        transcriptDiv.style.display = 'none';
+                        transcriptDiv.classList.add('transcript-unplayed');
+                        transcriptDiv.textContent = transcript;
+                    } else if (sender === 'user' && transcript === 'processing...') {
+                        const loadingIcon = document.createElement('i');
+                        loadingIcon.className = 'fas fa-spinner fa-spin loading-spinner-icon';
+                        transcriptDiv.appendChild(loadingIcon);
+                    } else {
+                        transcriptDiv.textContent = transcript;
+                    }
+                    
+                    messageDiv.appendChild(transcriptDiv);
+                }
+
+                const audioContainer = document.createElement('div');
+                audioContainer.className = 'audio-container';
+
+                const playButton = document.createElement('div');
+                playButton.className = 'play-button';
+                playButton.innerHTML = '<i class="fas fa-play"></i>';
+
+                const waveformContainer = document.createElement('div');
+                waveformContainer.className = 'waveform-container';
+
+                const waveformVisualization = document.createElement('div');
+                waveformVisualization.className = 'waveform-visualization';
+
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                const numberOfBars = 40;
+                for (let i = 0; i < numberOfBars; i++) {
+                    const waveBar = document.createElement('div');
+                    waveBar.className = 'wave-bar';
+                    waveBar.style.height = '40%'; 
+                    waveformVisualization.appendChild(waveBar);
+                }
+
+                fetch(audioUrl)
+                    .then(response => response.arrayBuffer())
+                    .then(arrayBuffer => audioContext.decodeAudioData(arrayBuffer))
+                    .then(audioBuffer => {
+                        const channelData = audioBuffer.getChannelData(0);
+                        const barSegmentLength = Math.floor(channelData.length / numberOfBars);
+                        const bars = waveformVisualization.children;
+
+                        for (let i = 0; i < numberOfBars; i++) {
+                            const start = i * barSegmentLength;
+                            const end = start + barSegmentLength;
+                            let maxAmplitude = 0; 
+
+                            for (let j = start; j < end; j++) {
+                                maxAmplitude = Math.max(maxAmplitude, Math.abs(channelData[j]));
+                            }
+
+                            const heightPercentage = Math.min(Math.max(maxAmplitude * 100, 5), 50);
+                            bars[i].style.height = `${heightPercentage}%`;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error analyzing audio:', error);
+                    });
+                
+                const progressIndicator = document.createElement('div');
+                progressIndicator.className = 'progress-indicator';
+                
+                waveformContainer.appendChild(waveformVisualization);
+                waveformContainer.appendChild(progressIndicator);
+                
+                const durationDisplay = document.createElement('div');
+                durationDisplay.className = 'duration-display';
+                durationDisplay.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+                const speedToggle = document.createElement('button');
+                speedToggle.className = 'speed-toggle';
+                speedToggle.textContent = '1x';
+                
+                const audio = document.createElement('audio');
+                audio.preload = 'metadata';
+                audio.src = audioUrl;
+                audio.load();
+
+                if (audioUrl.startsWith('blob:')) {
+                    audio.src = audioUrl;
+                } else {
+                    audio.src = audioUrl.startsWith('/uploads/') ? audioUrl : `/uploads/${audioUrl}`;
+                }       
+                
+                audio.controls = true;
+
+                let speedIndex = 0;
+                const speeds = [1, 1.5, 2];
+                
+                audio.addEventListener('loadedmetadata', () => {
+                    if (isFinite(audio.duration) && audio.duration > 0) {
+                        const mins = Math.floor(audio.duration / 60);
+                        const secs = Math.floor(audio.duration % 60).toString().padStart(2, '0');
+                        durationDisplay.textContent = `${mins}:${secs}`;
+                        console.log(`Audio duration loaded: ${mins}:${secs}`);
+                    }
+                });
+                
+                audio.addEventListener('error', (e) => {
+                    console.error('Audio loading error:', e);
+                    durationDisplay.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
+                });
+
+                playButton.addEventListener('click', () => {
+                    if (audio.paused) {
+                        stopAllAudio();
+                        audio.play();
+                        playButton.innerHTML = '<i class="fas fa-pause"></i>';
+                        if (sender === 'ai') {
+                            siriOrb.style.boxShadow = "0 0 20px 5px rgba(0, 128, 255, 0.7)";
+
+                            const transcriptDiv = messageDiv.querySelector('.transcript-text.transcript-unplayed');
+                            if (transcriptDiv) {
+                                transcriptDiv.style.opacity = '0';
+                                transcriptDiv.style.display = 'block';
+                                
+                                setTimeout(() => {
+                                    transcriptDiv.style.opacity = '1';
+                                }, 10);
+                                
+                                transcriptDiv.classList.remove('transcript-unplayed');
+                                
+                                logInteractionEvent('TRANSCRIPT', {
+                                    action: 'revealed',
+                                    timestamp: new Date().toISOString()
+                                });
+                            }
+                        }
+                        logInteractionEvent('AUDIO_PLAYBACK', { 
+                            action: 'started',
+                            timestamp: audio.currentTime.toFixed(2)
+                        });
+                    } else {
+                        audio.pause();
+                        playButton.innerHTML = '<i class="fas fa-play"></i>';
+                        if (sender === 'ai') {
+                            siriOrb.style.boxShadow = "none";
+                        }
+                        logInteractionEvent('AUDIO_PLAYBACK', { 
+                            action: 'paused',
+                            timestamp: audio.currentTime.toFixed(2)
+                        });
+                    }
+                }); 
+
+                speedToggle.addEventListener('click', () => {
+                    speedIndex = (speedIndex + 1) % speeds.length;
+                    const newSpeed = speeds[speedIndex];
+                    audio.playbackRate = newSpeed;
+                    speedToggle.textContent = newSpeed + 'x';
+                    logInteractionEvent('AUDIO_SPEED', { speed: newSpeed });
+                });
+
+                audio.addEventListener('timeupdate', () => {
+                    if (isFinite(audio.duration) && audio.duration > 0) {
+                        const percent = (audio.currentTime / audio.duration) * 100;
+                        progressIndicator.style.left = `${percent}%`;
+                        
+                        const remainingTime = audio.duration - audio.currentTime;
+                        const remainingMins = Math.floor(remainingTime / 60);
+                        const remainingSecs = Math.floor(remainingTime % 60).toString().padStart(2, '0');
+                        
+                        durationDisplay.textContent = `${remainingMins}:${remainingSecs}`;
+                    }
+                });
+
+                waveformContainer.addEventListener('click', (e) => {
+                    if (isFinite(audio.duration)) {
+                        const rect = waveformContainer.getBoundingClientRect();
+                        const clickPosition = (e.clientX - rect.left) / rect.width;
+                        audio.currentTime = clickPosition * audio.duration;
+                    }
+                });
+
+                audio.addEventListener('ended', () => {
+                    playButton.innerHTML = '<i class="fas fa-play"></i>';
+                    progressIndicator.style.left = '0%';
+                    if (sender === 'ai') {
+                        siriOrb.style.boxShadow = "none";
+                    }
+                    if (isFinite(audio.duration) && audio.duration > 0) {
+                        const minutes = Math.floor(audio.duration / 60);
+                        const seconds = Math.floor(audio.duration % 60);
+                        durationDisplay.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                    }
+                    logInteractionEvent('AUDIO_PLAYBACK', { 
+                        action: 'ended',
+                        timestamp: audio.duration.toFixed(2)
+                    });
+                });
+
+                const audioControls = document.createElement('div');
+                audioControls.className = 'audio-controls';
+
+                audioControls.appendChild(durationDisplay);
+                audioControls.appendChild(speedToggle);
+
+                audioContainer.appendChild(audioControls);
+                audioContainer.appendChild(playButton);
+                audioContainer.appendChild(waveformContainer);
+                audioContainer.appendChild(durationDisplay);
+                audioContainer.appendChild(speedToggle);
+                messageDiv.appendChild(audioContainer);
+                
+                chatContainer.appendChild(messageDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+
+                if (sender === 'user' && audioUrl.startsWith('blob:')) {
+                    console.log("Processing blob URL for user audio:", audioUrl);
+                    
+                    const metadataTimeout = setTimeout(() => {
+                        if (durationDisplay.innerHTML.includes('fa-spinner')) {
+                            durationDisplay.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
+                            console.log('Using error icon - metadata loading timeout');
+                        }
+                    }, 500);
+
+                    const metadataAudio = new Audio();
+                    metadataAudio.preload = 'metadata';
+                    
+                    metadataAudio.addEventListener('loadedmetadata', () => {
+                        clearTimeout(metadataTimeout);
+                        if (isFinite(metadataAudio.duration) && metadataAudio.duration > 0) {
+                            const mins = Math.floor(metadataAudio.duration / 60);
+                            const secs = Math.floor(metadataAudio.duration % 60).toString().padStart(2, '0');
+                            durationDisplay.textContent = `${mins}:${secs}`;
+                            console.log(`Audio metadata loaded. Duration: ${metadataAudio.duration}s`);
+                        }
+                    });
+                    
+                    metadataAudio.addEventListener('error', (e) => {
+                        console.error('Error loading audio metadata:', e);
+                        durationDisplay.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
+                    });
+                    
+                    metadataAudio.src = audioUrl;
+                    metadataAudio.load();
+                    
+                    audio.src = audioUrl;
+                    audio.load();
+                    
+                    if (window.audioContext) {
+                        fetch(audioUrl)
+                            .then(response => response.blob())
+                            .then(blob => {
+                                const fileReader = new FileReader();
+                                fileReader.onload = function() {
+                                    const arrayBuffer = this.result;
+                                    
+                                    window.audioContext.decodeAudioData(arrayBuffer)
+                                        .then(decodedData => {
+                                            clearTimeout(metadataTimeout);
+                                            const duration = decodedData.duration;
+                                            const mins = Math.floor(duration / 60);
+                                            const secs = Math.floor(duration % 60).toString().padStart(2, '0');
+                                            durationDisplay.textContent = `${mins}:${secs}`;
+                                            console.log(`Decoded audio duration: ${duration}s`);
+                                            
+                                            if (!isFinite(audio.duration) || audio.duration <= 0) {
+                                                audio.load();
+                                            }
+                                        })
+                                        .catch(err => {
+                                            console.error('Error decoding audio data:', err);
+                                            estimateDurationFromBlob(blob, durationDisplay, metadataTimeout);
+                                        });
+                                };
+                                
+                                fileReader.readAsArrayBuffer(blob);
+                            })
+                            .catch(err => {
+                                console.error('Error fetching blob for decoding:', err);
+                                
+                                const tempAudio = new Audio();
+                                
+                                tempAudio.addEventListener('loadedmetadata', () => {
+                                    clearTimeout(metadataTimeout);
+                                    if (isFinite(tempAudio.duration) && tempAudio.duration > 0) {
+                                        const mins = Math.floor(tempAudio.duration / 60);
+                                        const secs = Math.floor(tempAudio.duration % 60).toString().padStart(2, '0');
+                                        durationDisplay.textContent = `${mins}:${secs}`;
+                                        console.log(`Temp audio metadata loaded. Duration: ${tempAudio.duration}s`);
+                                    }
+                                });
+                                
+                                tempAudio.src = audioUrl;
+                                tempAudio.load();
+                            });
+                    } else {
+                        const tempAudio = new Audio();
+                        
+                        tempAudio.addEventListener('loadedmetadata', () => {
+                            clearTimeout(metadataTimeout);
+                            if (isFinite(tempAudio.duration) && tempAudio.duration > 0) {
+                                const mins = Math.floor(tempAudio.duration / 60);
+                                const secs = Math.floor(tempAudio.duration % 60).toString().padStart(2, '0');
+                                durationDisplay.textContent = `${mins}:${secs}`;
+                                console.log(`Temp audio metadata loaded. Duration: ${tempAudio.duration}s`);
+                            }
+                        });
+                        
+                        fetch(audioUrl)
+                            .then(response => response.blob())
+                            .then(blob => {
+                                estimateDurationFromBlob(blob, durationDisplay, metadataTimeout);
+                            })
+                            .catch(err => console.error('Error fetching blob:', err));
+                        
+                        tempAudio.src = audioUrl;
+                        tempAudio.load();
+                    }
+                }
+                return messageDiv;
+            }
+
+            function estimateDurationFromBlob(blob, durationDisplay, timeoutToCancel) {
+                if (blob.size > 0) {
+                    const estimatedSecs = Math.max(1, blob.size / 16000); 
+                    const mins = Math.floor(estimatedSecs / 60);
+                    const secs = Math.floor(estimatedSecs % 60).toString().padStart(2, '0');
+                    
+                    if (durationDisplay.innerHTML.includes('fa-spinner') || 
+                        durationDisplay.innerHTML.includes('fa-exclamation-circle')) {
+                        durationDisplay.textContent = `${mins}:${secs}`;
+                        console.log(`Estimated duration from blob size (${blob.size} bytes): ${mins}:${secs}`);
+                        
+                        if (timeoutToCancel) {
+                            clearTimeout(timeoutToCancel);
+                        }
+                    }
+                }
+            }
+
+                    function stopAllAudio() {
+                        const audios = document.querySelectorAll('audio');
+                        audios.forEach(audio => {
+                            audio.pause();
+                            const playButton = audio.parentElement.querySelector('.play-button');
+                            if (playButton) {
+                                playButton.innerHTML = '<i class="fas fa-play"></i>';
+                            }
+                        });
+                        siriOrb.style.boxShadow = "none";
+                    }
+
+                    function moveToNextSlide() {
+                        onNextPage();
+                    }
+                });
+            </script>
+</body>
+</html> 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
