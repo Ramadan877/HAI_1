@@ -149,7 +149,7 @@ def create_session_record(participant_id, trial_type, version):
 def save_audio_with_cloud_backup(audio_data, filename, session_id, recording_type, concept_name=None, attempt_number=None):
     """Save audio locally and backup to cloud storage."""
     try:
-        local_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        local_path = os.path.join('uploads/', filename)
         
         if hasattr(audio_data, 'save'):
             audio_data.save(local_path)
