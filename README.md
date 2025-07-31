@@ -42,22 +42,47 @@ pip install -r requirements.txt
 ```
 
 
-### 4. Set Up OpenAI API Key
+### 4. Set Up Environment Variables
 
-The application uses OpenAI's API for transcription and chat.  
-Set your API key as an environment variable:
+The application requires several environment variables for proper operation.  
+Create a `.env` file in the V1 directory with the following variables:
 
 ```bash
-export OPENAI_API_KEY=your_openai_api_key_here
+# OpenAI API Configuration
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Database Configuration (PostgreSQL)
+DATABASE_URL=postgresql://username:password@hostname:port/database_name
+
+# Security Configuration
+SECRET_KEY=your_secret_key_here
+
+# Cloud Storage Configuration (Optional - for S3 backup)
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_REGION=your_aws_region
+CLOUD_STORAGE_BUCKET=your_s3_bucket_name
 ```
 
-On Windows (Command Prompt):
+**Required Variables:**
+- `OPENAI_API_KEY`: Your OpenAI API key for transcription and AI responses
+- `DATABASE_URL`: PostgreSQL database connection string for data storage
+- `SECRET_KEY`: Secret key for Flask session security
 
-```cmd
-set OPENAI_API_KEY=your_openai_api_key_here
-```
+**Optional Variables:**
+- AWS credentials: For cloud backup of audio files (can work without S3)
 
-### 5. Run the Application
+### 5. Set Up Database
+
+The application uses PostgreSQL for data storage. The database tables will be created automatically when you first run the application.
+
+**Database Features:**
+- Participant and session management
+- Interaction logging (all conversations)
+- Recording metadata storage
+- Data export functionality
+
+### 6. Run the Application
 
 From the `V1` directory, start the Flask server:
 
@@ -66,6 +91,18 @@ python app.py
 ```
 
 The server will start on [http://localhost:5000](http://localhost:5000).
+
+### 7. Data Export (Research Data Collection)
+
+The application includes comprehensive data export functionality for research purposes:
+
+- **Data Dashboard**: Visit `/data_dashboard` to view statistics and recent sessions
+- **Complete Export**: Visit `/export_complete_data` to download all data (database + files)
+- **CSV Export**: Visit `/export_csv` to download database data as CSV files
+- **File Browser**: Visit `/browse_files` to browse local user data files
+- **Participant Export**: Visit `/export_participant/<participant_id>` for individual participant data
+
+All exports maintain the original User_Data folder structure for consistency with your existing data organization.
 
 ---
 
@@ -81,11 +118,14 @@ The server will start on [http://localhost:5000](http://localhost:5000).
 
 ## File Structure
 
-- `V1/app.py` — Main Flask backend for the first version
+- `V1/app.py` — Main Flask backend with database integration and data export
+- `V1/database.py` — Database models and configuration
 - `V1/templates/index.html` — Main UI template
 - `V1/static/` — Static files (JS, CSS)
 - `V1/resources/` — PDF and other resource files
-- `V1/uploads/` — Audio and log storage
+- `V1/uploads/User Data/` — Participant audio files and logs (preserved structure)
+- `V1/requirements.txt` — Python dependencies including database packages
+- `V1/.env` — Environment variables (create this file)
 
 ---
 
