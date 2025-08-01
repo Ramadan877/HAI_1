@@ -356,14 +356,14 @@ def get_cached_audio(text):
         print(f"Error in cached audio generation: {str(e)}")
         return None
 
-@lru_cache(maxsize=32)
-def cached_transcribe(audio_file_path_hash):
-    """Helper function to enable caching of transcription results"""
-    model = get_whisper_model()
-    if model:
-        result = model.transcribe(audio_file_path_hash)
-        return result["text"]
-    return "Transcription failed."
+# @lru_cache(maxsize=32)
+# def cached_transcribe(audio_file_path_hash):
+#     """Helper function to enable caching of transcription results"""
+#     model = get_whisper_model()
+#     if model:
+#         result = model.transcribe(audio_file_path_hash)
+#         return result["text"]
+#     return "Transcription failed."
 
 def speech_to_text(audio_file_path):
     """Convert audio to text using OpenAI Whisper API or local fallback."""
