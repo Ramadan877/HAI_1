@@ -329,16 +329,21 @@ except Exception as e:
     model = None
 
 whisper_model = None
+whisper_loading = False
 
 def get_whisper_model():
-    global whisper_model
-    if whisper_model is None:
+    global whisper_model, whisper_loading
+    if whisper_model is None and not whisper_loading:
         try:
+            whisper_loading = True
             print("Loading Whisper model...")
             whisper_model = whisper.load_model("small")
             print("Whisper model loaded successfully")
         except Exception as e:
             print(f"Failed to load Whisper model: {str(e)}")
+            whisper_model = None
+        finally:
+            whisper_loading = False
     return whisper_model
 
 @lru_cache(maxsize=32)
@@ -379,8 +384,12 @@ def speech_to_text(audio_file_path):
         print("Falling back to local Whisper model...")
         
         try:
-            result = model.transcribe(audio_file_path)
-            return result["text"]
+            model = get_whisper_model()
+            if model:
+                result = model.transcribe(audio_file_path)
+                return result["text"]
+            else:
+                return "Whisper model not available"
         except Exception as e2:
             print(f"Error using local Whisper model: {str(e2)}")
             return "Your audio input could not be processed."
@@ -511,6 +520,11 @@ def save_screen_recording():
     except Exception as e:
         app.logger.error(f"Error saving screen recording: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for deployment platforms."""
+    return jsonify({'status': 'healthy', 'service': 'HAI V1'}), 200
 
 @app.route('/')
 def home():
