@@ -1122,7 +1122,74 @@ def data_dashboard():
 
 @app.route('/export_complete_data')
 def export_complete_data():
-    """Export complete database data and local files as ZIP."""
+    """Export User Data folder structure organized by participant ID."""
+    try:
+        import zipfile
+        import csv
+        from io import StringIO, BytesIO
+        
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            
+            # Export the complete User Data folder structure
+            user_data_path = app.config['USER_AUDIO_FOLDER']
+            if os.path.exists(user_data_path):
+                print(f"Exporting User Data from: {user_data_path}")
+                
+                # Walk through each participant folder
+                for participant_id in os.listdir(user_data_path):
+                    participant_path = os.path.join(user_data_path, participant_id)
+                    
+                    if os.path.isdir(participant_path):
+                        print(f"Processing participant: {participant_id}")
+                        
+                        # Add all files in participant folder
+                        for root, dirs, files in os.walk(participant_path):
+                            for file in files:
+                                file_path = os.path.join(root, file)
+                                # Create archive path: User_Data/ParticipantID/filename
+                                rel_path = os.path.relpath(file_path, user_data_path)
+                                archive_path = f"User_Data/{rel_path}"
+                                
+                                try:
+                                    zip_file.write(file_path, archive_path)
+                                    print(f"Added: {archive_path}")
+                                except Exception as e:
+                                    print(f"Could not add file {file_path}: {str(e)}")
+            
+            # Add a summary CSV with participant information
+            participants = Participant.query.all()
+            if participants:
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(['Participant_ID', 'Total_Sessions', 'Total_Interactions', 'Created_At'])
+                
+                for p in participants:
+                    sessions_count = Session.query.filter_by(participant_id=p.participant_id).count()
+                    session_ids = [s.session_id for s in Session.query.filter_by(participant_id=p.participant_id).all()]
+                    interactions_count = Interaction.query.filter(Interaction.session_id.in_(session_ids)).count() if session_ids else 0
+                    
+                    writer.writerow([p.participant_id, sessions_count, interactions_count, p.created_at])
+                
+                zip_file.writestr('Participants_Summary.csv', csv_buffer.getvalue())
+        
+        zip_buffer.seek(0)
+        
+        from flask import Response
+        return Response(
+            zip_buffer.getvalue(),
+            mimetype='application/zip',
+            headers={'Content-Disposition': f'attachment; filename=HAI_V1_User_Data_Export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'}
+        )
+        
+    except Exception as e:
+        print(f"Export error: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/export_database_data')
+def export_database_data():
+    """Export complete database data as CSV files in ZIP."""
     try:
         import zipfile
         import csv
@@ -1171,17 +1238,6 @@ def export_complete_data():
                 for r in recordings:
                     writer.writerow([r.id, r.session_id, r.recording_type, r.file_path, r.original_filename, r.file_size, r.concept_name, r.attempt_number, r.created_at])
                 zip_file.writestr('Database_Export/recordings.csv', csv_buffer.getvalue())
-            
-            user_data_path = app.config['USER_AUDIO_FOLDER']
-            if os.path.exists(user_data_path):
-                for root, dirs, files in os.walk(user_data_path):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        archive_path = os.path.relpath(file_path, os.path.dirname(user_data_path))
-                        try:
-                            zip_file.write(file_path, archive_path)
-                        except Exception as e:
-                            print(f"Could not add file {file_path}: {str(e)}")
         
         zip_buffer.seek(0)
         
@@ -1189,7 +1245,7 @@ def export_complete_data():
         return Response(
             zip_buffer.getvalue(),
             mimetype='application/zip',
-            headers={'Content-Disposition': f'attachment; filename=HAI_V1_Complete_Data_Export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'}
+            headers={'Content-Disposition': f'attachment; filename=HAI_V1_Database_Export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'}
         )
         
     except Exception as e:
