@@ -320,13 +320,8 @@ def allowed_file(filename):
     """Check if the file type is allowed."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-try:
-    logger.info("Loading Whisper model...")
-    model = whisper.load_model("small")
-    logger.info("Whisper model loaded successfully")
-except Exception as e:
-    logger.error(f"Failed to load Whisper model: {str(e)}")
-    model = None
+# Whisper model will be loaded lazily when needed
+model = None
 
 whisper_model = None
 whisper_loading = False
