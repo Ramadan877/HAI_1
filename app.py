@@ -430,8 +430,8 @@ def log_interaction(speaker, concept_name, message):
         trial_type = session.get('trial_type')
 
         if not participant_id or not trial_type:
-            print("Error logging interaction: Missing participant_id or trial_type in session")
-            return False
+            print(f"Skipping file logging - session not fully initialized (participant_id: {participant_id}, trial_type: {trial_type})")
+            return True  
             
         folders = get_participant_folder(participant_id, trial_type)
         log_file_path = os.path.join(folders['participant_folder'], f"conversation_log_{participant_id}.txt")
