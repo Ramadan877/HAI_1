@@ -533,7 +533,13 @@ def home():
 @app.route('/resources/<path:filename>')
 def download_resource(filename):
     """Serve resources like PDF or video files from the resources folder."""
-    return send_from_directory('resources', filename)
+    try:
+        return send_from_directory('resources', filename)
+    except FileNotFoundError:
+        return jsonify({'error': f'Resource file {filename} not found'}), 404
+    except Exception as e:
+        print(f"Error serving resource {filename}: {str(e)}")
+        return jsonify({'error': f'Error serving resource file {filename}'}), 500
 
 @lru_cache
 def load_concepts():
@@ -917,7 +923,13 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
 @app.route('/pdf')
 def serve_pdf():
     """Serve the PDF file for the current concept."""
-    return send_from_directory('resources', 'Extraneous Variables.pdf')
+    try:
+        return send_from_directory('resources', 'Extraneous Variables.pdf')
+    except FileNotFoundError:
+        return jsonify({'error': 'PDF file not found'}), 404
+    except Exception as e:
+        print(f"Error serving PDF: {str(e)}")
+        return jsonify({'error': 'Error serving PDF file'}), 500
 
 @app.route('/uploads/User Data/<participant_id>/<filename>')
 def serve_audio_new(participant_id, filename):
@@ -1058,10 +1070,6 @@ def shutdown():
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory('static', filename)
-
-@app.route('/resources/<path:filename>')
-def serve_resource(filename):
-    return send_from_directory('resources', filename)
 
 @app.route('/backup_to_cloud', methods=['POST'])
 def backup_to_cloud():
