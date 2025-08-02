@@ -47,7 +47,6 @@ import tempfile
 import atexit
 import signal
 from functools import lru_cache
-import boto3
 from dotenv import load_dotenv
 from database import db, Participant, Session, Interaction, Recording, UserEvent
 import uuid
@@ -64,27 +63,9 @@ app.secret_key = os.environ.get('SECRET_KEY', 'fallback-secret-key')
 
 db.init_app(app)
 
-s3_client = boto3.client(
-    's3',
-    aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-    aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
-    region_name=os.environ.get('AWS_REGION')
-)
-
-BUCKET_NAME = os.environ.get('CLOUD_STORAGE_BUCKET')
-
 with app.app_context():
     db.create_all()
 
-
-def upload_to_s3(file_path, s3_key):
-    """Upload file to S3 and return the URL."""
-    try:
-        s3_client.upload_file(file_path, BUCKET_NAME, s3_key)
-        return f"https://{BUCKET_NAME}.s3.{os.environ.get('AWS_REGION')}.amazonaws.com/{s3_key}"
-    except Exception as e:
-        print(f"Error uploading to S3: {str(e)}")
-        return None
 
 def save_interaction_to_db(session_id, speaker, concept_name, message, attempt_number=1):
     """Save interaction to database."""
@@ -147,7 +128,7 @@ def create_session_record(participant_id, trial_type, version):
         return None
 
 def save_audio_with_cloud_backup(audio_data, filename, session_id, recording_type, concept_name=None, attempt_number=None):
-    """Save audio locally and backup to cloud storage."""
+    """Save audio locally."""
     try:
         local_path = os.path.join('uploads/', filename)
         
@@ -157,22 +138,7 @@ def save_audio_with_cloud_backup(audio_data, filename, session_id, recording_typ
             with open(local_path, 'wb') as f:
                 f.write(audio_data)
         
-        s3_key = f"recordings/{session_id}/{filename}"
-        cloud_url = upload_to_s3(local_path, s3_key)
-        
-        if cloud_url:
-            file_size = os.path.getsize(local_path) if os.path.exists(local_path) else 0
-            save_recording_to_db(
-                session_id=session_id,
-                recording_type=recording_type,
-                file_path=cloud_url,
-                original_filename=filename,
-                file_size=file_size,
-                concept_name=concept_name,
-                attempt_number=attempt_number
-            )
-        
-        return local_path, cloud_url
+        return local_path, None
     except Exception as e:
         print(f"Error in save_audio_with_cloud_backup: {str(e)}")
         return None, None
@@ -185,66 +151,6 @@ def log_interaction_to_db_only(speaker, concept_name, message, attempt_number=1)
             save_interaction_to_db(session_id, speaker, concept_name, message, attempt_number)
     except Exception as e:
         print(f"Error logging interaction to database: {str(e)}")
-
-def backup_existing_files_to_cloud():
-    """Backup existing local files to cloud storage - can be called periodically."""
-    try:
-        participant_id = session.get('participant_id')
-        trial_type = session.get('trial_type')
-        session_id = session.get('session_id')
-        
-        if not all([participant_id, trial_type, session_id]):
-            return False
-            
-        folders = get_participant_folder(participant_id, trial_type)
-        participant_folder = folders['participant_folder']
-        
-        for filename in os.listdir(participant_folder):
-            if filename.endswith(('.mp3', '.wav', '.webm')):
-                local_path = os.path.join(participant_folder, filename)
-                s3_key = f"recordings/{session_id}/{filename}"
-                cloud_url = upload_to_s3(local_path, s3_key)
-                
-                if cloud_url:
-                    recording_type = 'audio'
-                    if 'user_' in filename:
-                        recording_type = 'user_audio'
-                    elif 'ai_' in filename:
-                        recording_type = 'ai_audio'
-                    elif 'screen_recording' in filename:
-                        recording_type = 'screen'
-                    
-                    file_size = os.path.getsize(local_path)
-                    save_recording_to_db(
-                        session_id=session_id,
-                        recording_type=recording_type,
-                        file_path=cloud_url,
-                        original_filename=filename,
-                        file_size=file_size
-                    )
-        
-        screen_folder = folders['screen_recordings_folder']
-        if os.path.exists(screen_folder):
-            for filename in os.listdir(screen_folder):
-                if filename.endswith('.webm'):
-                    local_path = os.path.join(screen_folder, filename)
-                    s3_key = f"screen_recordings/{session_id}/{filename}"
-                    cloud_url = upload_to_s3(local_path, s3_key)
-                    
-                    if cloud_url:
-                        file_size = os.path.getsize(local_path)
-                        save_recording_to_db(
-                            session_id=session_id,
-                            recording_type='screen',
-                            file_path=cloud_url,
-                            original_filename=filename,
-                            file_size=file_size
-                        )
-        
-        return True
-    except Exception as e:
-        print(f"Error backing up files to cloud: {str(e)}")
-        return False
 
 def initialize_session_in_db():
     """Initialize session in database when user starts - call this in set_trial_type."""
@@ -1063,13 +969,9 @@ def serve_static(filename):
 
 @app.route('/backup_to_cloud', methods=['POST'])
 def backup_to_cloud():
-    """Manual backup of current session files to cloud storage."""
+    """Manual backup endpoint - no longer functional but kept for compatibility."""
     try:
-        success = backup_existing_files_to_cloud()
-        if success:
-            return jsonify({'status': 'success', 'message': 'Files backed up to cloud'})
-        else:
-            return jsonify({'status': 'error', 'message': 'Backup failed'}), 500
+        return jsonify({'status': 'info', 'message': 'Cloud backup functionality has been removed. Use /export_complete_data to download User Data.'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
