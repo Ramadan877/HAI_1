@@ -859,28 +859,87 @@
                         timestamp: new Date().toISOString()
                     });
                     
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    // Check if we're on HTTPS or localhost
+                    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                        console.warn('Not on HTTPS - some features may not work');
+                    }
+
+                    // Check if getUserMedia is supported
+                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                        throw new Error('getUserMedia not supported in this browser');
+                    }
                     
+                    console.log('Requesting microphone access...');
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        } 
+                    });
+                    
+                    console.log('Microphone access granted');
                     logInteractionEvent('MICROPHONE', { 
                         action: 'permission_granted',
                         concept: getCurrentConcept(),
                         timestamp: new Date().toISOString()
                     });
                     
+                    // Create AudioContext with user interaction
                     if (!window.audioContext) {
-                        window.audioContext = new AudioContext();
+                        try {
+                            window.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                            console.log('AudioContext created successfully');
+                        } catch (e) {
+                            console.warn('AudioContext creation failed, visualizer will not work:', e);
+                        }
+                    }
+                    
+                    // Resume AudioContext if suspended (required on deployed sites)
+                    if (window.audioContext && window.audioContext.state === 'suspended') {
+                        try {
+                            await window.audioContext.resume();
+                            console.log('AudioContext resumed');
+                        } catch (e) {
+                            console.warn('Failed to resume AudioContext:', e);
+                        }
                     }
                     
                     audioContext = window.audioContext;
-                    analyser = audioContext.createAnalyser();
-                    const source = audioContext.createMediaStreamSource(stream);
+                    
+                    // Only create analyser if AudioContext is working
+                    if (audioContext && audioContext.state === 'running') {
+                        try {
+                            analyser = audioContext.createAnalyser();
+                            const source = audioContext.createMediaStreamSource(stream);
+                            analyser.fftSize = 256;
+                            analyser.smoothingTimeConstant = 0.8;
+                            source.connect(analyser);
+                            dataArray = new Uint8Array(analyser.frequencyBinCount);
+                            console.log('Audio visualization setup completed');
+                        } catch (e) {
+                            console.warn('Audio visualization setup failed:', e);
+                            analyser = null; // Disable visualization
+                        }
+                    } else {
+                        console.warn('AudioContext not running, disabling visualization');
+                        analyser = null;
+                    }
 
-                    analyser.fftSize = 256;
-                    analyser.smoothingTimeConstant = 0.8;
-                    source.connect(analyser);
-                    dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-                    mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm;codecs=opus'});
+                    // Set up MediaRecorder with fallback MIME types
+                    let mimeType = 'audio/webm;codecs=opus';
+                    if (!MediaRecorder.isTypeSupported(mimeType)) {
+                        mimeType = 'audio/webm';
+                        if (!MediaRecorder.isTypeSupported(mimeType)) {
+                            mimeType = 'audio/mp4';
+                            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                                mimeType = ''; // Let browser choose
+                            }
+                        }
+                    }
+                    
+                    console.log('Using MIME type:', mimeType || 'browser default');
+                    mediaRecorder = new MediaRecorder(stream, mimeType ? {mimeType: mimeType} : {});
                     
                     mediaRecorder.ondataavailable = event => {
                         if (event.data.size > 0) {
@@ -899,7 +958,7 @@
 
                     logInteractionEvent('RECORDING', { 
                         action: 'media_recorder_started',
-                        mime_type: 'audio/webm;codecs=opus',
+                        mime_type: mimeType || 'browser_default',
                         concept: getCurrentConcept(),
                         timestamp: new Date().toISOString()
                     });
@@ -910,14 +969,28 @@
                 } catch (error) {
                     console.error('Error accessing microphone:', error);
                     
+                    let errorMessage = 'Unable to access microphone. ';
+                    if (error.name === 'NotAllowedError') {
+                        errorMessage += 'Please allow microphone permissions and try again.';
+                    } else if (error.name === 'NotFoundError') {
+                        errorMessage += 'No microphone found. Please connect a microphone.';
+                    } else if (error.name === 'NotSupportedError') {
+                        errorMessage += 'Your browser does not support audio recording.';
+                    } else if (error.message.includes('HTTPS')) {
+                        errorMessage += 'This site must be accessed via HTTPS for microphone access.';
+                    } else {
+                        errorMessage += 'Error: ' + error.message;
+                    }
+                    
                     logInteractionEvent('MICROPHONE', { 
                         action: 'permission_denied_or_error',
                         error: error.message,
+                        error_name: error.name,
                         concept: getCurrentConcept(),
                         timestamp: new Date().toISOString()
                     });
                     
-                    alert('Unable to access microphone. Please check permissions.');
+                    alert(errorMessage);
                     resetWhatsAppRecording();
                 }
             }
@@ -958,7 +1031,8 @@
                         return; 
                     }
 
-                    if (analyser) {
+                    if (analyser && dataArray) {
+                        // Real audio visualization
                         analyser.getByteFrequencyData(dataArray);
                         
                         let sum = 0;
@@ -972,6 +1046,13 @@
                         const finalVolume = Math.max(0, Math.min(255, averageVolume + noise));
                         
                         addWaveformBar(finalVolume);
+                    } else {
+                        // Fallback: Simulated visualization when analyser is not available
+                        const baseVolume = 80 + Math.random() * 60; // Random between 80-140
+                        const variation = (Math.sin(Date.now() / 200) * 30) + (Math.random() - 0.5) * 40;
+                        const simulatedVolume = Math.max(40, Math.min(200, baseVolume + variation));
+                        
+                        addWaveformBar(simulatedVolume);
                     }
                     
                     whatsAppRecorder.animationId = requestAnimationFrame(visualizeAudio);
@@ -1125,7 +1206,8 @@
                         return; 
                     }
 
-                    if (analyser) {
+                    if (analyser && dataArray) {
+                        // Real audio visualization
                         analyser.getByteFrequencyData(dataArray);
                         
                         let sum = 0;
@@ -1139,6 +1221,13 @@
                         const finalVolume = Math.max(0, Math.min(255, averageVolume + noise));
                         
                         addWaveformBar(finalVolume);
+                    } else {
+                        // Fallback: Simulated visualization when analyser is not available
+                        const baseVolume = 80 + Math.random() * 60; // Random between 80-140
+                        const variation = (Math.sin(Date.now() / 200) * 30) + (Math.random() - 0.5) * 40;
+                        const simulatedVolume = Math.max(40, Math.min(200, baseVolume + variation));
+                        
+                        addWaveformBar(simulatedVolume);
                     }
                     
                     whatsAppRecorder.animationId = requestAnimationFrame(visualizeAudio);
