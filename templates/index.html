@@ -65,16 +65,41 @@
             <div class="chat-container" id="chat-container"></div>
 
             <div class="input-bar">
-                <button class="action-btn delete-btn" id="delete-btn">
-                    <i class="fas fa-trash"></i>
-                </button>
-                <canvas id="voice-visualizer"></canvas>
-                <button class="action-btn" id="record-btn">
-                    <i class="fas fa-microphone"></i>
-                </button>
-                <button class="action-btn pause-btn" id="pause-btn" style="display: none;">
-                    <i class="fas fa-pause"></i>
-                </button>
+                <!-- WhatsApp-style voice recorder -->
+                <div id="whatsapp-recorder" class="whatsapp-recorder" style="display: none;">
+                    <button id="cancel-record-btn" class="recorder-btn cancel-btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                    
+                    <div class="waveform-container-wa">
+                        <div class="recording-timer">0:00</div>
+                        <div class="waveform-display">
+                            <div class="waveform-bars" id="waveform-bars"></div>
+                        </div>
+                    </div>
+                    
+                    <button id="pause-record-btn" class="recorder-btn pause-btn">
+                        <i class="fas fa-pause"></i>
+                    </button>
+                    
+                    <button id="send-record-btn" class="recorder-btn send-btn">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+                
+                <!-- Default state buttons -->
+                <div id="default-controls" class="default-controls">
+                    <button class="action-btn delete-btn" id="delete-btn">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                    <canvas id="voice-visualizer"></canvas>
+                    <button class="action-btn" id="record-btn">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                    <button class="action-btn pause-btn" id="pause-btn" style="display: none;">
+                        <i class="fas fa-pause"></i>
+                    </button>
+                </div>
             </div>
             
             <div class="loading-indicator" id="loading-indicator">
@@ -98,8 +123,25 @@
             const modal = document.getElementById('chat-modal');
             const closeModal = document.getElementById('close-modal');
             const recordBtn = document.getElementById('record-btn');
-            document.getElementById('pause-btn').addEventListener('click', togglePause);
-            document.getElementById('delete-btn').addEventListener('click', deleteRecording);
+            document.getElementById('pause-btn').addEventListener('click', () => {
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'pause_legacy',
+                    action: isPaused ? 'resume' : 'pause',
+                    concept: getCurrentConcept(),
+                    timestamp: new Date().toISOString()
+                });
+                togglePause();
+            });
+            document.getElementById('delete-btn').addEventListener('click', () => {
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'delete_legacy',
+                    was_recording: isRecording,
+                    was_paused: isPaused,
+                    concept: getCurrentConcept(),
+                    timestamp: new Date().toISOString()
+                });
+                deleteRecording();
+            });
             const chatContainer = document.getElementById('chat-container');
             const loadingIndicator = document.getElementById('loading-indicator');
             const visualizer = document.getElementById('voice-visualizer');
@@ -146,9 +188,13 @@
                 const deleteBtn = document.getElementById('delete-btn');
                 const visualizer = document.getElementById('voice-visualizer');
                 const loadingIndicator = document.getElementById('loading-indicator');
+                const defaultControls = document.getElementById('default-controls');
+                const whatsappRecorder = document.getElementById('whatsapp-recorder');
 
                 switch(state) {
                     case 'idle':
+                        defaultControls.style.display = 'flex';
+                        whatsappRecorder.style.display = 'none';
                         recordBtn.style.display = 'flex';
                         pauseBtn.style.display = 'none';
                         deleteBtn.style.display = 'none';
@@ -156,13 +202,11 @@
                         loadingIndicator.classList.remove('active');
                         break;
                     case 'recording':
-                        recordBtn.style.display = 'flex';
-                        pauseBtn.style.display = 'flex';
-                        deleteBtn.style.display = 'flex';
-                        visualizer.style.display = 'block';
                         loadingIndicator.classList.remove('active');
                         break;
                     case 'loading':
+                        defaultControls.style.display = 'flex';
+                        whatsappRecorder.style.display = 'none';
                         recordBtn.style.display = 'none';
                         pauseBtn.style.display = 'none';
                         deleteBtn.style.display = 'none';
@@ -188,6 +232,13 @@
                     alert('Please enter a Participant ID');
                     return false;
                 }
+                
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'start_trial',
+                    trial_type: trialType,
+                    participant_id: participantId,
+                    timestamp: new Date().toISOString()
+                });
                 
                 isSubmitting = true;
                 const buttons = document.querySelectorAll('.start-trial-btn');
@@ -250,6 +301,13 @@
 
             startInteractionBtn.addEventListener('click', function() {
                 if (!currentTrialType) return;
+                
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'start_interaction',
+                    trial_type: currentTrialType,
+                    participant_id: window.participantId,
+                    timestamp: new Date().toISOString()
+                });
                 
                 let initialPage = 1;
                 switch(currentTrialType) {
@@ -358,12 +416,32 @@
 
             function onPrevPage() {
                 if (pageNum <= 1) return;
+                
+                logInteractionEvent('NAVIGATION', { 
+                    button: 'previous_page',
+                    from_page: pageNum,
+                    to_page: pageNum - 1,
+                    from_concept: getConceptNameForSlide(pageNum),
+                    to_concept: getConceptNameForSlide(pageNum - 1),
+                    timestamp: new Date().toISOString()
+                });
+                
                 pageNum--;
                 queueRenderPage(pageNum);
             }
 
             function onNextPage() {
                 if (pageNum >= pdfDoc.numPages) return;
+                
+                logInteractionEvent('NAVIGATION', { 
+                    button: 'next_page',
+                    from_page: pageNum,
+                    to_page: pageNum + 1,
+                    from_concept: getConceptNameForSlide(pageNum),
+                    to_concept: getConceptNameForSlide(pageNum + 1),
+                    timestamp: new Date().toISOString()
+                });
+                
                 pageNum++;
                 queueRenderPage(pageNum);
             }
@@ -420,6 +498,16 @@
                     if (targetSlide) {
                         const slideNum = parseInt(targetSlide, 10);
                         if (!isNaN(slideNum)) {
+                            logInteractionEvent('NAVIGATION', { 
+                                button: 'direct_slide_navigation',
+                                from_page: pageNum,
+                                to_page: slideNum,
+                                from_concept: getConceptNameForSlide(pageNum),
+                                to_concept: getConceptNameForSlide(slideNum),
+                                button_target: targetSlide,
+                                timestamp: new Date().toISOString()
+                            });
+                            
                             pageNum = slideNum;
                             queueRenderPage(pageNum);
                             
@@ -681,190 +769,489 @@
 
             avatar.addEventListener('click', () => {
                 if (modal.classList.contains('show')) {
+                    logInteractionEvent('BUTTON_CLICK', { 
+                        button: 'avatar',
+                        action: 'hide_modal',
+                        timestamp: new Date().toISOString()
+                    });
                     hideModal();
                 } else {
+                    logInteractionEvent('BUTTON_CLICK', { 
+                        button: 'avatar',
+                        action: 'show_modal',
+                        timestamp: new Date().toISOString()
+                    });
                     showModal();
                 }
             });
 
 
-            closeModal.addEventListener('click', hideModal);
+            closeModal.addEventListener('click', () => {
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'close_modal',
+                    action: 'hide_modal',
+                    timestamp: new Date().toISOString()
+                });
+                hideModal();
+            });
 
             window.addEventListener('click', (event) => {
                 if (event.target === modal) {
+                    logInteractionEvent('BUTTON_CLICK', { 
+                        button: 'modal_background',
+                        action: 'hide_modal',
+                        timestamp: new Date().toISOString()
+                    });
                     hideModal();
                 }
             });
             recordBtn.addEventListener('click', async () => {
-                if (!isRecording) {
-                    try {
-                        if (mediaRecorder) {
-                            mediaRecorder = null;
-                        }
-                        if (audioContext && audioContext !== window.audioContext) {
-                            await audioContext.close();
-                        }
-
-                        audioChunks = [];
-                        isRecording = true;
-                        recordBtn.innerHTML = '<i class="fas fa-paper-plane"></i>';    
-                        updateInputBarState('recording');
-                        activateSiriOrb();
-                        siriOrb.style.boxShadow = "0 0 20px 5px rgba(255, 255, 255, 0.7)";
-                        
-                        visualizer.style.display = 'block';
-                        recordBtn.style.display = 'flex';
-
-                        logInteractionEvent('RECORDING', { 
-                            action: 'started',
-                            timestamp: new Date().toISOString()
-                        });
-                        
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        
-                        if (!window.audioContext) {
-                            window.audioContext = new AudioContext();
-                        }
-                        
-                        audioContext = window.audioContext;
-                        analyser = audioContext.createAnalyser();
-                        const source = audioContext.createMediaStreamSource(stream);
-
-                        analyser.fftSize = 256;
-                        analyser.smoothingTimeConstant = 0.8;
-                        source.connect(analyser);
-                        dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-                        const canvas = document.getElementById('voice-visualizer');
-                        canvas.width = canvas.offsetWidth * (window.devicePixelRatio || 1);
-                        canvas.height = canvas.offsetHeight * (window.devicePixelRatio || 1);
-                        canvas.style.width = canvas.offsetWidth + 'px';
-                        canvas.style.height = canvas.offsetHeight + 'px';
-
-                        mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm;codecs=opus'});
-                        
-                        mediaRecorder.ondataavailable = event => {
-                            if (event.data.size > 0) {
-                                audioChunks.push(event.data);
-                            }
-                        };
-                        
-                        mediaRecorder.onerror = (event) => {
-                            console.error('MediaRecorder error:', event);
-                            alert('Error recording audio: ' + event.error);
-                            resetRecordingState();
-                        };
-                        
-                        mediaRecorder.start();
-                        console.log("MediaRecorder started", mediaRecorder.state);
-
-                        visualize();
-                    } catch (error) {
-                        console.error('Error accessing microphone:', error);
-                        alert('Unable to access microphone. Please check permissions.');
-                        resetRecordingState();
-                    }
-                } else {
-                    recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
-
-                    stopRecording();
-                    if (animationId) {
-                        cancelAnimationFrame(animationId);
-                    }
-                    
-                    recordBtn.style.display = 'flex';
-                    visualizer.style.display = 'none';
-                    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
-                    siriOrb.style.boxShadow = "none";
-                }
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'record',
+                    action: 'start_whatsapp_recording',
+                    timestamp: new Date().toISOString()
+                });
+                startWhatsAppRecording();
             });
 
-        
-            function visualize() {
-                const canvas = document.getElementById('voice-visualizer');
-                const WIDTH = canvas.width;
-                const HEIGHT = canvas.height;
-                const canvasCtx = canvas.getContext('2d');
+            // WhatsApp-style recording functionality
+            let whatsAppRecorder = {
+                isRecording: false,
+                isPaused: false,
+                startTime: null,
+                pausedTime: 0,
+                waveformBars: [],
+                animationId: null,
+                timerInterval: null,
+                maxBars: 50
+            };
 
-                if (animationId) {
-                    cancelAnimationFrame(animationId);
-                }
-
-                function draw() {
-                    if (!isPaused) {
-                        animationId = requestAnimationFrame(draw);
-
-                        analyser.getByteFrequencyData(dataArray); 
-
-                        canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
-
-                        const barWidth = (WIDTH / dataArray.length) * 2.5; 
-                        let x = 0;
-
-                        for (let i = 0; i < dataArray.length; i++) {
-                            let barHeight = dataArray[i] / 255 * HEIGHT * 0.9; 
-                            if (barHeight < 2) barHeight = 2;
-
-                            canvasCtx.fillStyle = '#4fd1c5';
-                            canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
-
-                            x += barWidth + 1;
-                        }
-                    }
-                }
-
-                analyser.fftSize = 256; 
-                analyser.smoothingTimeConstant = 0.8; 
-                dataArray = new Uint8Array(analyser.frequencyBinCount); 
-
-                draw();
+            function startWhatsAppRecording() {
+                const defaultControls = document.getElementById('default-controls');
+                const whatsappRecorder = document.getElementById('whatsapp-recorder');
+                
+                defaultControls.style.display = 'none';
+                whatsappRecorder.style.display = 'flex';
+                
+                initializeWhatsAppRecording();
             }
 
-            function stopRecording() {
+            async function initializeWhatsAppRecording() {
+                try {
+                    if (mediaRecorder) {
+                        mediaRecorder = null;
+                    }
+                    if (audioContext && audioContext !== window.audioContext) {
+                        await audioContext.close();
+                    }
+
+                    audioChunks = [];
+                    whatsAppRecorder.isRecording = true;
+                    whatsAppRecorder.isPaused = false;
+                    whatsAppRecorder.startTime = Date.now();
+                    whatsAppRecorder.pausedTime = 0;
+                    
+                    activateSiriOrb();
+                    siriOrb.style.boxShadow = "0 0 20px 5px rgba(255, 255, 255, 0.7)";
+
+                    logInteractionEvent('RECORDING', { 
+                        action: 'started',
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    
+                    logInteractionEvent('MICROPHONE', { 
+                        action: 'permission_granted',
+                        concept: getCurrentConcept(),
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    if (!window.audioContext) {
+                        window.audioContext = new AudioContext();
+                    }
+                    
+                    audioContext = window.audioContext;
+                    analyser = audioContext.createAnalyser();
+                    const source = audioContext.createMediaStreamSource(stream);
+
+                    analyser.fftSize = 256;
+                    analyser.smoothingTimeConstant = 0.8;
+                    source.connect(analyser);
+                    dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                    mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm;codecs=opus'});
+                    
+                    mediaRecorder.ondataavailable = event => {
+                        if (event.data.size > 0) {
+                            audioChunks.push(event.data);
+                        }
+                    };
+                    
+                    mediaRecorder.onerror = (event) => {
+                        console.error('MediaRecorder error:', event);
+                        alert('Error recording audio: ' + event.error);
+                        resetWhatsAppRecording();
+                    };
+                    
+                    mediaRecorder.start();
+                    console.log("WhatsApp-style MediaRecorder started", mediaRecorder.state);
+
+                    logInteractionEvent('RECORDING', { 
+                        action: 'media_recorder_started',
+                        mime_type: 'audio/webm;codecs=opus',
+                        concept: getCurrentConcept(),
+                        timestamp: new Date().toISOString()
+                    });
+
+                    startWhatsAppVisualization();
+                    startRecordingTimer();
+                    
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    
+                    logInteractionEvent('MICROPHONE', { 
+                        action: 'permission_denied_or_error',
+                        error: error.message,
+                        concept: getCurrentConcept(),
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    alert('Unable to access microphone. Please check permissions.');
+                    resetWhatsAppRecording();
+                }
+            }
+
+            function startWhatsAppVisualization() {
+                const waveformBars = document.getElementById('waveform-bars');
+                whatsAppRecorder.waveformBars = [];
+
+                function addWaveformBar(volume) {
+                    if (whatsAppRecorder.waveformBars.length >= whatsAppRecorder.maxBars) {
+                        const oldBar = waveformBars.firstChild;
+                        if (oldBar) {
+                            waveformBars.removeChild(oldBar);
+                            whatsAppRecorder.waveformBars.shift();
+                        }
+                    }
+
+                    const bar = document.createElement('div');
+                    bar.className = 'waveform-bar';
+                    
+                    const height = Math.max(3, Math.min(26, (volume / 255) * 26));
+                    bar.style.height = height + 'px';
+                    
+                    waveformBars.appendChild(bar);
+                    whatsAppRecorder.waveformBars.push(bar);
+                    
+                    bar.classList.add('pulse');
+                    setTimeout(() => bar.classList.remove('pulse'), 300);
+                }
+
+                function visualizeAudio() {
+                    if (!whatsAppRecorder.isRecording) {
+                        return; 
+                    }
+                    
+                    if (whatsAppRecorder.isPaused) {
+                        whatsAppRecorder.animationId = requestAnimationFrame(visualizeAudio);
+                        return; 
+                    }
+
+                    if (analyser) {
+                        analyser.getByteFrequencyData(dataArray);
+                        
+                        let sum = 0;
+                        const focusRange = Math.min(dataArray.length, 40); 
+                        for (let i = 0; i < focusRange; i++) {
+                            sum += dataArray[i];
+                        }
+                        const averageVolume = sum / focusRange;
+                        
+                        const noise = (Math.random() - 0.5) * 15;
+                        const finalVolume = Math.max(0, Math.min(255, averageVolume + noise));
+                        
+                        addWaveformBar(finalVolume);
+                    }
+                    
+                    whatsAppRecorder.animationId = requestAnimationFrame(visualizeAudio);
+                }
+
+                visualizeAudio();
+            }
+
+            function startRecordingTimer() {
+                const timerElement = document.querySelector('.recording-timer');
+                
+                whatsAppRecorder.timerInterval = setInterval(() => {
+                    if (whatsAppRecorder.isPaused) {
+                        return; 
+                    }
+                    
+                    const currentTime = Date.now();
+                    const elapsed = Math.floor((currentTime - whatsAppRecorder.startTime - whatsAppRecorder.pausedTime) / 1000);
+                    
+                    const minutes = Math.floor(elapsed / 60);
+                    const seconds = elapsed % 60;
+                    
+                    timerElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                }, 100); 
+            }
+
+            document.getElementById('cancel-record-btn').addEventListener('click', cancelWhatsAppRecording);
+            document.getElementById('pause-record-btn').addEventListener('click', toggleWhatsAppRecording);
+            document.getElementById('send-record-btn').addEventListener('click', sendWhatsAppRecording);
+
+            function cancelWhatsAppRecording() {
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'cancel_recording',
+                    recording_duration: whatsAppRecorder.startTime ? Math.floor((Date.now() - whatsAppRecorder.startTime - whatsAppRecorder.pausedTime) / 1000) : 0,
+                    was_paused: whatsAppRecorder.isPaused,
+                    concept: getCurrentConcept(),
+                    timestamp: new Date().toISOString()
+                });
+                
+                resetWhatsAppRecording();
+                
+                logInteractionEvent('RECORDING', { 
+                    action: 'cancelled',
+                    timestamp: new Date().toISOString()
+                });
+            }
+
+            function toggleWhatsAppRecording() {
+                console.log('Pause/Resume button clicked!'); // Debug log
+                const pauseBtn = document.getElementById('pause-record-btn');
+                const whatsappRecorderEl = document.getElementById('whatsapp-recorder');
+                
+                if (!whatsAppRecorder.isPaused) {
+                    console.log('Pausing recording...');
+                    
+                    logInteractionEvent('BUTTON_CLICK', { 
+                        button: 'pause_recording',
+                        action: 'pause',
+                        recording_duration: Math.floor((Date.now() - whatsAppRecorder.startTime - whatsAppRecorder.pausedTime) / 1000),
+                        concept: getCurrentConcept(),
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    whatsAppRecorder.isPaused = true;
+                    whatsAppRecorder.pauseStartTime = Date.now();
+                    
+                    if (mediaRecorder && mediaRecorder.state === 'recording') {
+                        mediaRecorder.pause();
+                    }
+                    
+                    pauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+                    pauseBtn.classList.add('paused');
+                    whatsappRecorderEl.classList.add('paused');
+                    
+                    if (whatsAppRecorder.animationId) {
+                        cancelAnimationFrame(whatsAppRecorder.animationId);
+                        whatsAppRecorder.animationId = null;
+                    }
+                    
+                    logInteractionEvent('RECORDING', { 
+                        action: 'paused',
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                } else {
+                    console.log('Resuming recording...');
+                    
+                    logInteractionEvent('BUTTON_CLICK', { 
+                        button: 'pause_recording',
+                        action: 'resume',
+                        pause_duration: Math.floor((Date.now() - whatsAppRecorder.pauseStartTime) / 1000),
+                        total_recording_duration: Math.floor((Date.now() - whatsAppRecorder.startTime - whatsAppRecorder.pausedTime) / 1000),
+                        concept: getCurrentConcept(),
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    whatsAppRecorder.isPaused = false;
+                    whatsAppRecorder.pausedTime += Date.now() - whatsAppRecorder.pauseStartTime;
+                    
+                    if (mediaRecorder && mediaRecorder.state === 'paused') {
+                        mediaRecorder.resume();
+                    }
+                    
+                    pauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+                    pauseBtn.classList.remove('paused');
+                    whatsappRecorderEl.classList.remove('paused');
+                    
+                    startWhatsAppVisualizationContinued();
+                    
+                    logInteractionEvent('RECORDING', { 
+                        action: 'resumed',
+                        timestamp: new Date().toISOString()
+                    });
+                }
+            }
+
+            function startWhatsAppVisualizationContinued() {
+                if (whatsAppRecorder.animationId) return; 
+
+                function addWaveformBar(volume) {
+                    const waveformBars = document.getElementById('waveform-bars');
+                    
+                    if (whatsAppRecorder.waveformBars.length >= whatsAppRecorder.maxBars) {
+                        const oldBar = waveformBars.firstChild;
+                        if (oldBar) {
+                            waveformBars.removeChild(oldBar);
+                            whatsAppRecorder.waveformBars.shift();
+                        }
+                    }
+
+                    const bar = document.createElement('div');
+                    bar.className = 'waveform-bar';
+                    
+                    const height = Math.max(3, Math.min(26, (volume / 255) * 26));
+                    bar.style.height = height + 'px';
+                    
+                    waveformBars.appendChild(bar);
+                    whatsAppRecorder.waveformBars.push(bar);
+                    
+                    bar.classList.add('pulse');
+                    setTimeout(() => bar.classList.remove('pulse'), 300);
+                }
+
+                function visualizeAudio() {
+                    if (!whatsAppRecorder.isRecording) {
+                        return; 
+                    }
+                    
+                    if (whatsAppRecorder.isPaused) {
+                        whatsAppRecorder.animationId = requestAnimationFrame(visualizeAudio);
+                        return; 
+                    }
+
+                    if (analyser) {
+                        analyser.getByteFrequencyData(dataArray);
+                        
+                        let sum = 0;
+                        const focusRange = Math.min(dataArray.length, 40); 
+                        for (let i = 0; i < focusRange; i++) {
+                            sum += dataArray[i];
+                        }
+                        const averageVolume = sum / focusRange;
+                        
+                        const noise = (Math.random() - 0.5) * 15;
+                        const finalVolume = Math.max(0, Math.min(255, averageVolume + noise));
+                        
+                        addWaveformBar(finalVolume);
+                    }
+                    
+                    whatsAppRecorder.animationId = requestAnimationFrame(visualizeAudio);
+                }
+
+                visualizeAudio();
+            }
+
+            async function sendWhatsAppRecording() {
                 if (!mediaRecorder || mediaRecorder.state === 'inactive') {
                     console.warn('MediaRecorder not active');
                     return;
                 }
                 
-                console.log("Stopping MediaRecorder", mediaRecorder.state);
-                isRecording = false;
+                const recordingDuration = Math.floor((Date.now() - whatsAppRecorder.startTime - whatsAppRecorder.pausedTime) / 1000);
+                
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'send_recording',
+                    recording_duration: recordingDuration,
+                    pause_count: whatsAppRecorder.pausedTime > 0 ? 1 : 0, 
+                    total_paused_time: Math.floor(whatsAppRecorder.pausedTime / 1000),
+                    concept: getCurrentConcept(),
+                    timestamp: new Date().toISOString()
+                });
+                
+                console.log("Sending WhatsApp-style recording", mediaRecorder.state);
+                whatsAppRecorder.isRecording = false;
                 
                 logInteractionEvent('RECORDING', { 
-                    action: 'stopped',
+                    action: 'sent',
                     timestamp: new Date().toISOString()
                 });
 
                 try {
+                    if (mediaRecorder.state === 'paused') {
+                        mediaRecorder.resume();
+                    }
                     mediaRecorder.stop();
                 } catch (err) {
                     console.error('Error stopping MediaRecorder:', err);
-                    updateInputBarState('idle');
+                    resetWhatsAppRecording();
                     return;
                 }
 
                 mediaRecorder.onstop = async () => {
                     try {
-                        updateInputBarState('loading');  
+                        updateInputBarState('loading');
                         
                         if (audioChunks.length === 0) {
                             throw new Error('No audio data recorded');
                         }
                         
                         currentConcept = getCurrentConcept();
-                        console.log("Sending audio for concept:", currentConcept);
+                        console.log("Sending WhatsApp audio for concept:", currentConcept);
                         
                         const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
                         
                         await submitMessage(null, audioBlob);
+                        resetWhatsAppRecording();
 
                     } catch (error) {
                         console.error('Error processing audio:', error);
                         alert('Error processing audio: ' + error.message);
-                        recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                        resetWhatsAppRecording();
                     } finally {
                         loadingIndicator.classList.remove('active');
                     }
                 };
+            }
+
+            function resetWhatsAppRecording() {
+                if (whatsAppRecorder.animationId) {
+                    cancelAnimationFrame(whatsAppRecorder.animationId);
+                }
+                if (whatsAppRecorder.timerInterval) {
+                    clearInterval(whatsAppRecorder.timerInterval);
+                }
+
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    try {
+                        mediaRecorder.stop();
+                    } catch (e) {
+                        console.warn('Error stopping MediaRecorder during reset:', e);
+                    }
+                }
+
+                whatsAppRecorder.isRecording = false;
+                whatsAppRecorder.isPaused = false;
+                whatsAppRecorder.startTime = null;
+                whatsAppRecorder.pausedTime = 0;
+                whatsAppRecorder.waveformBars = [];
+
+                const defaultControls = document.getElementById('default-controls');
+                const whatsappRecorder = document.getElementById('whatsapp-recorder');
+                const waveformBars = document.getElementById('waveform-bars');
+                const timerElement = document.querySelector('.recording-timer');
+                const pauseBtn = document.getElementById('pause-record-btn');
+                
+                defaultControls.style.display = 'flex';
+                whatsappRecorder.style.display = 'none';
+                
+                waveformBars.innerHTML = '';
+                timerElement.textContent = '0:00';
+                
+                pauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+                pauseBtn.classList.remove('paused');
+                
+                siriOrb.style.boxShadow = "none";
+                
+                audioChunks = [];
+                isRecording = false;
+                
+                updateInputBarState('idle');
             }
 
             async function submitMessage(message = null, audioBlob = null) {
@@ -971,49 +1358,16 @@
             }
 
             function togglePause() {
-                if (!mediaRecorder) {
-                    console.warn('No media recorder available');
-                    return;
-                }
-                
-                try {
-                    if (isPaused) {
-                        mediaRecorder.resume();
-                        isPaused = false;
-                        document.getElementById('pause-btn').innerHTML = '<i class="fas fa-pause"></i>';
-                        console.log('Recording resumed');
-                        if (analyser) {
-                            visualize();
-                        }
-                    } else {
-                        mediaRecorder.pause();
-                        isPaused = true;
-                        document.getElementById('pause-btn').innerHTML = '<i class="fas fa-play"></i>';
-                        console.log('Recording paused');
-
-                        if (animationId) {
-                            cancelAnimationFrame(animationId);
-                            animationId = null;
-                        }
-                        const canvas = document.getElementById('voice-visualizer');
-                        const canvasCtx = canvas.getContext('2d');
-                        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
-                    }
-                    
-                    logInteractionEvent('RECORDING', { 
-                        action: isPaused ? 'paused' : 'resumed',
-                        timestamp: new Date().toISOString()
-                    });
-                } catch (error) {
-                    console.error('Error toggling pause:', error);
-                    alert('Error pausing/resuming recording');
-                }
+                console.warn('togglePause called - using WhatsApp recorder pause instead');
             }
 
-            document.getElementById('pause-btn').addEventListener('click', togglePause);
-
             function deleteRecording() {
-                console.log('Delete recording called');
+                console.log('Delete recording called - resetting any active recording');
+                
+                if (whatsAppRecorder.isRecording) {
+                    resetWhatsAppRecording();
+                    return;
+                }
                 
                 try {
                     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -1037,18 +1391,16 @@
                     const canvasCtx = canvas.getContext('2d');
                     canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
                     
+                    if (siriOrb) {
+                        siriOrb.style.boxShadow = "none";
+                    }
+                    updateInputBarState('idle');
+                    
                     if (audioContext && audioContext !== window.audioContext) {
                         audioContext.close().catch(console.error);
                     }
                     
                     mediaRecorder = null;
-                    
-                    updateInputBarState('idle');
-                    
-                    const siriOrb = document.querySelector('.siri-orb');
-                    if (siriOrb) {
-                        siriOrb.style.boxShadow = "none";
-                    }
                     
                     logInteractionEvent('RECORDING', { 
                         action: 'deleted',
@@ -1058,11 +1410,20 @@
                     console.log('Recording deleted successfully');
                 } catch (error) {
                     console.error('Error deleting recording:', error);
-                    alert('Error deleting recording');
+                    updateInputBarState('idle');
                 }
             }
 
-            document.getElementById('delete-btn').addEventListener('click', deleteRecording);
+            document.getElementById('delete-btn').addEventListener('click', () => {
+                logInteractionEvent('BUTTON_CLICK', { 
+                    button: 'delete_recording',
+                    was_recording: isRecording,
+                    was_paused: isPaused,
+                    concept: getCurrentConcept(),
+                    timestamp: new Date().toISOString()
+                });
+                deleteRecording();
+            });
 
             function resetRecordingState() {
                 isRecording = false;
@@ -1195,6 +1556,14 @@
 
                 playButton.addEventListener('click', () => {
                     if (audio.paused) {
+                        logInteractionEvent('BUTTON_CLICK', { 
+                            button: 'audio_play',
+                            sender: sender,
+                            audio_duration: audio.duration || 'unknown',
+                            concept: getCurrentConcept(),
+                            timestamp: new Date().toISOString()
+                        });
+                        
                         stopAllAudio();
                         audio.play();
                         playButton.innerHTML = '<i class="fas fa-pause"></i>';
@@ -1223,6 +1592,14 @@
                             timestamp: audio.currentTime.toFixed(2)
                         });
                     } else {
+                        logInteractionEvent('BUTTON_CLICK', { 
+                            button: 'audio_pause',
+                            sender: sender,
+                            audio_position: audio.currentTime.toFixed(2),
+                            concept: getCurrentConcept(),
+                            timestamp: new Date().toISOString()
+                        });
+                        
                         audio.pause();
                         playButton.innerHTML = '<i class="fas fa-play"></i>';
                         if (sender === 'ai') {
@@ -1240,6 +1617,15 @@
                     const newSpeed = speeds[speedIndex];
                     audio.playbackRate = newSpeed;
                     speedToggle.textContent = newSpeed + 'x';
+                    
+                    logInteractionEvent('BUTTON_CLICK', { 
+                        button: 'audio_speed_toggle',
+                        new_speed: newSpeed,
+                        sender: sender,
+                        concept: getCurrentConcept(),
+                        timestamp: new Date().toISOString()
+                    });
+                    
                     logInteractionEvent('AUDIO_SPEED', { speed: newSpeed });
                 });
 
@@ -1260,11 +1646,31 @@
                     if (isFinite(audio.duration)) {
                         const rect = waveformContainer.getBoundingClientRect();
                         const clickPosition = (e.clientX - rect.left) / rect.width;
-                        audio.currentTime = clickPosition * audio.duration;
+                        const targetTime = clickPosition * audio.duration;
+                        
+                        logInteractionEvent('BUTTON_CLICK', { 
+                            button: 'audio_waveform_seek',
+                            sender: sender,
+                            from_time: audio.currentTime.toFixed(2),
+                            to_time: targetTime.toFixed(2),
+                            seek_percentage: (clickPosition * 100).toFixed(1),
+                            concept: getCurrentConcept(),
+                            timestamp: new Date().toISOString()
+                        });
+                        
+                        audio.currentTime = targetTime;
                     }
                 });
 
                 audio.addEventListener('ended', () => {
+                    logInteractionEvent('AUDIO_PLAYBACK', { 
+                        action: 'finished',
+                        sender: sender,
+                        duration: audio.duration.toFixed(2),
+                        concept: getCurrentConcept(),
+                        timestamp: new Date().toISOString()
+                    });
+                    
                     playButton.innerHTML = '<i class="fas fa-play"></i>';
                     progressIndicator.style.left = '0%';
                     if (sender === 'ai') {

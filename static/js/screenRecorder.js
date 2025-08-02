@@ -1,7 +1,7 @@
 let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
-let isSaving = false; // Add this flag to prevent multiple save attempts
+let isSaving = false; 
 
 async function startScreenRecording() {
     try {
@@ -111,7 +111,6 @@ async function cleanupScreenRecording() {
         try {
             console.log('Cleaning up recording...');
             
-            // Create a promise that resolves when the recording is saved
             const savePromise = new Promise((resolve) => {
                 const originalOnStop = mediaRecorder.onstop;
                 mediaRecorder.onstop = async () => {
@@ -143,17 +142,14 @@ async function cleanupScreenRecording() {
     }
 }
 
-// Enhanced beforeunload handler with synchronous save attempt
 window.addEventListener('beforeunload', async (event) => {
     if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
         console.log('Page unloading, attempting to save recording...');
         
-        // Try to save synchronously if possible
         try {
             if (recordedChunks.length > 0) {
                 const blob = new Blob(recordedChunks, { type: 'video/webm' });
                 
-                // Use sendBeacon for more reliable delivery during page unload
                 const formData = new FormData();
                 formData.append('screen_recording', blob, 'screen_recording.webm');
                 formData.append('trial_type', window.currentTrialType);
@@ -166,12 +162,10 @@ window.addEventListener('beforeunload', async (event) => {
             console.error('Error during beforeunload save:', error);
         }
         
-        // Also try the async cleanup
         await cleanupScreenRecording();
     }
 });
 
-// Enhanced visibility change handler
 document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'hidden' && isRecording) {
         console.log('Page hidden, saving recording...');
@@ -179,7 +173,6 @@ document.addEventListener('visibilitychange', async () => {
     }
 });
 
-// Add unload event handler as backup
 window.addEventListener('unload', async (event) => {
     if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
         console.log('Page unloading (unload event), saving recording...');
@@ -188,7 +181,6 @@ window.addEventListener('unload', async (event) => {
             if (recordedChunks.length > 0) {
                 const blob = new Blob(recordedChunks, { type: 'video/webm' });
                 
-                // Use sendBeacon for reliable delivery
                 const formData = new FormData();
                 formData.append('screen_recording', blob, 'screen_recording.webm');
                 formData.append('trial_type', window.currentTrialType);
