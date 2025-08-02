@@ -780,12 +780,15 @@
 
         .wave-bar {
             flex: 1;
-            background-color: #1e293b;
+            background-color: rgba(0, 229, 255, 0.6);
             margin: 0 1px;
-            border-radius: 1px;
+            border-radius: 2px;
             transition: height 0.2s ease;
             min-width: 2px;
             max-width: 4px;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(0, 229, 255, 0.2);
         }
 
         .progress-indicator {

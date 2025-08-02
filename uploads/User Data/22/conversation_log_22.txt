@@ -1,0 +1,34 @@
+================================================================================
+CONVERSATION LOG
+================================================================================
+
+PARTICIPANT ID: 22
+INTERACTION ID: 22_20250802213436
+VERSION: 1
+TRIAL: Trial_1
+TIMESTAMP: 2025-08-02 21:34:37
+
+--------------------------------------------------------------------------------
+
+[2025-08-02 21:34:37] SYSTEM (None): Trial type changed from Trial_1 to Trial_1 for participant 22
+[2025-08-02 21:34:38] SYSTEM (Correlation): User BUTTON_CLICK
+[2025-08-02 21:34:38] SYSTEM (Confounders): User navigated to slide [5] with the concept: [Confounders]
+[2025-08-02 21:34:39] SYSTEM (Confounders): User opened the chat window
+[2025-08-02 21:34:39] SYSTEM (Confounders): User navigated to slide [5] with the concept: [Confounders]
+[2025-08-02 21:34:40] SYSTEM (Confounders): User BUTTON_CLICK
+[2025-08-02 21:34:40] SYSTEM (Confounders): User started recording at 2025-08-02T19:34:40.735Z
+[2025-08-02 21:34:40] SYSTEM (Confounders): User MICROPHONE
+[2025-08-02 21:34:40] SYSTEM (Confounders): User RECORDING
+[2025-08-02 21:34:41] AI (Introduction): Hello, let us begin the self-explanation journey! We'll be exploring the concept of Extraneous Variables, focusing on Correlation, Confounders, and Moderators. Please go through each concept and explain what you understand about them in your own words!
+[2025-08-02 21:34:44] SYSTEM (Confounders): User BUTTON_CLICK
+[2025-08-02 21:34:44] SYSTEM (Confounders): User RECORDING
+[2025-08-02 21:34:44] SYSTEM (Confounders): User submitted recording (size: 55223 bytes, duration: unknowns) at 2025-08-02T19:34:44.385Z
+[2025-08-02 21:34:52] SYSTEM (Confounders): User BUTTON_CLICK
+[2025-08-02 21:34:52] SYSTEM (Confounders): User TRANSCRIPT
+[2025-08-02 21:34:52] SYSTEM (Confounders): User started audio playback at 0.00 seconds
+[2025-08-02 21:34:54] SYSTEM (Confounders): User BUTTON_CLICK
+[2025-08-02 21:34:54] SYSTEM (Confounders): User paused audio playback at 1.89 seconds
+[2025-08-02 21:34:59] SYSTEM (Confounders): User BUTTON_CLICK
+[2025-08-02 21:34:59] SYSTEM (Confounders): User started audio playback at 0.00 seconds
+[2025-08-02 21:35:03] SYSTEM (Confounders): User ended audio playback at 3.36 seconds
+[2025-08-02 21:35:03] SYSTEM (Confounders): User finished audio playback at 2025-08-02T19:35:02.975Z seconds
