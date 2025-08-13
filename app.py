@@ -1012,9 +1012,9 @@ def data_dashboard():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-@app.route('/export_complete_data')
-def export_complete_data():
-    """Export User Data folder structure organized by participant ID."""
+@app.route('/export_research_data')
+def export_research_data():
+    """Export comprehensive research data including all interactions and analysis."""
     try:
         import zipfile
         import csv
@@ -1024,42 +1024,161 @@ def export_complete_data():
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             
-            user_data_path = app.config['USER_AUDIO_FOLDER']
-            if os.path.exists(user_data_path):
-                print(f"Exporting User Data from: {user_data_path}")
-                
-                for participant_id in os.listdir(user_data_path):
-                    participant_path = os.path.join(user_data_path, participant_id)
-                    
-                    if os.path.isdir(participant_path):
-                        print(f"Processing participant: {participant_id}")
-                        
-                        for root, dirs, files in os.walk(participant_path):
-                            for file in files:
-                                file_path = os.path.join(root, file)
-                                rel_path = os.path.relpath(file_path, user_data_path)
-                                archive_path = f"User_Data/{rel_path}"
-                                
-                                try:
-                                    zip_file.write(file_path, archive_path)
-                                    print(f"Added: {archive_path}")
-                                except Exception as e:
-                                    print(f"Could not add file {file_path}: {str(e)}")
-            
+            # 1. Detailed Participants Data
             participants = Participant.query.all()
             if participants:
                 csv_buffer = StringIO()
                 writer = csv.writer(csv_buffer)
-                writer.writerow(['Participant_ID', 'Total_Sessions', 'Total_Interactions', 'Created_At'])
+                writer.writerow(['Participant_ID', 'Created_At', 'Total_Sessions', 'Total_Interactions', 'Trial_Types', 'Versions_Used'])
                 
                 for p in participants:
-                    sessions_count = Session.query.filter_by(participant_id=p.participant_id).count()
-                    session_ids = [s.session_id for s in Session.query.filter_by(participant_id=p.participant_id).all()]
-                    interactions_count = Interaction.query.filter(Interaction.session_id.in_(session_ids)).count() if session_ids else 0
+                    sessions = Session.query.filter_by(participant_id=p.participant_id).all()
+                    sessions_count = len(sessions)
+                    trial_types = list(set([s.trial_type for s in sessions if s.trial_type]))
+                    versions = list(set([s.version for s in sessions if s.version]))
                     
-                    writer.writerow([p.participant_id, sessions_count, interactions_count, p.created_at])
+                    total_interactions = 0
+                    for s in sessions:
+                        interactions_count = Interaction.query.filter_by(session_id=s.session_id).count()
+                        total_interactions += interactions_count
+                    
+                    writer.writerow([
+                        p.participant_id, 
+                        p.created_at, 
+                        sessions_count, 
+                        total_interactions,
+                        '; '.join(trial_types),
+                        '; '.join(versions)
+                    ])
                 
-                zip_file.writestr('Participants_Summary.csv', csv_buffer.getvalue())
+                zip_file.writestr('01_Participants_Summary.csv', csv_buffer.getvalue())
+            
+            # 2. Detailed Sessions Data
+            sessions = Session.query.order_by(Session.started_at.desc()).all()
+            if sessions:
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(['Session_ID', 'Participant_ID', 'Trial_Type', 'Version', 'Started_At', 'Ended_At', 'Duration_Minutes', 'Total_Interactions'])
+                
+                for s in sessions:
+                    interactions_count = Interaction.query.filter_by(session_id=s.session_id).count()
+                    duration = None
+                    if s.started_at and s.ended_at:
+                        duration = (s.ended_at - s.started_at).total_seconds() / 60
+                    
+                    writer.writerow([
+                        s.session_id,
+                        s.participant_id,
+                        s.trial_type,
+                        s.version,
+                        s.started_at,
+                        s.ended_at,
+                        round(duration, 2) if duration else '',
+                        interactions_count
+                    ])
+                
+                zip_file.writestr('02_Sessions_Detail.csv', csv_buffer.getvalue())
+            
+            # 3. All Interactions with Full Text
+            interactions = Interaction.query.order_by(Interaction.timestamp.desc()).all()
+            if interactions:
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(['Session_ID', 'Participant_ID', 'Timestamp', 'Speaker', 'Concept_Name', 'Message_Text', 'Attempt_Number', 'Character_Count', 'Word_Count'])
+                
+                for i in interactions:
+                    session = Session.query.filter_by(session_id=i.session_id).first()
+                    participant_id = session.participant_id if session else 'Unknown'
+                    
+                    char_count = len(i.message) if i.message else 0
+                    word_count = len(i.message.split()) if i.message else 0
+                    
+                    writer.writerow([
+                        i.session_id,
+                        participant_id,
+                        i.timestamp,
+                        i.speaker,
+                        i.concept_name,
+                        i.message,
+                        i.attempt_number,
+                        char_count,
+                        word_count
+                    ])
+                
+                zip_file.writestr('03_All_Interactions.csv', csv_buffer.getvalue())
+            
+            # 4. User Explanations Only (Research Gold)
+            user_interactions = Interaction.query.filter_by(speaker='USER').order_by(Interaction.timestamp.desc()).all()
+            if user_interactions:
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(['Participant_ID', 'Session_ID', 'Timestamp', 'Concept_Name', 'User_Explanation', 'Attempt_Number', 'Word_Count'])
+                
+                for i in user_interactions:
+                    session = Session.query.filter_by(session_id=i.session_id).first()
+                    participant_id = session.participant_id if session else 'Unknown'
+                    word_count = len(i.message.split()) if i.message else 0
+                    
+                    writer.writerow([
+                        participant_id,
+                        i.session_id,
+                        i.timestamp,
+                        i.concept_name,
+                        i.message,
+                        i.attempt_number,
+                        word_count
+                    ])
+                
+                zip_file.writestr('04_User_Explanations_RESEARCH_DATA.csv', csv_buffer.getvalue())
+            
+            # 5. Concept-wise Analysis
+            concepts = ['Correlation', 'Confounders', 'Moderators']
+            for concept in concepts:
+                concept_interactions = Interaction.query.filter_by(concept_name=concept, speaker='USER').all()
+                if concept_interactions:
+                    csv_buffer = StringIO()
+                    writer = csv.writer(csv_buffer)
+                    writer.writerow(['Participant_ID', 'Session_ID', 'Timestamp', 'User_Explanation', 'Attempt_Number', 'Word_Count'])
+                    
+                    for i in concept_interactions:
+                        session = Session.query.filter_by(session_id=i.session_id).first()
+                        participant_id = session.participant_id if session else 'Unknown'
+                        word_count = len(i.message.split()) if i.message else 0
+                        
+                        writer.writerow([
+                            participant_id,
+                            i.session_id,
+                            i.timestamp,
+                            i.message,
+                            i.attempt_number,
+                            word_count
+                        ])
+                    
+                    zip_file.writestr(f'05_Concept_{concept}_Explanations.csv', csv_buffer.getvalue())
+        
+            # 6. Summary Statistics
+            csv_buffer = StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow(['Metric', 'Value'])
+            
+            total_participants = Participant.query.count()
+            total_sessions = Session.query.count()
+            total_interactions = Interaction.query.count()
+            user_interactions_count = Interaction.query.filter_by(speaker='USER').count()
+            ai_interactions_count = Interaction.query.filter_by(speaker='AI').count()
+            
+            avg_interactions_per_session = total_interactions / total_sessions if total_sessions > 0 else 0
+            avg_sessions_per_participant = total_sessions / total_participants if total_participants > 0 else 0
+            
+            writer.writerow(['Total Participants', total_participants])
+            writer.writerow(['Total Sessions', total_sessions])
+            writer.writerow(['Total Interactions', total_interactions])
+            writer.writerow(['User Explanations', user_interactions_count])
+            writer.writerow(['AI Responses', ai_interactions_count])
+            writer.writerow(['Avg Interactions per Session', round(avg_interactions_per_session, 2)])
+            writer.writerow(['Avg Sessions per Participant', round(avg_sessions_per_participant, 2)])
+            
+            zip_file.writestr('00_Research_Summary_Statistics.csv', csv_buffer.getvalue())
         
         zip_buffer.seek(0)
         
@@ -1067,11 +1186,266 @@ def export_complete_data():
         return Response(
             zip_buffer.getvalue(),
             mimetype='application/zip',
-            headers={'Content-Disposition': f'attachment; filename=HAI_V1_User_Data_Export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'}
+            headers={'Content-Disposition': f'attachment; filename=HAI_V1_Research_Data_Complete_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'}
         )
         
     except Exception as e:
         print(f"Export error: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/export_complete_data')
+def export_complete_data():
+    """Export available user data - files if they exist, otherwise comprehensive database export."""
+    try:
+        import zipfile
+        import csv
+        from io import StringIO, BytesIO
+        
+        zip_buffer = BytesIO()
+        files_found = False
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            
+            # Check if any actual user files exist
+            user_data_path = app.config['USER_AUDIO_FOLDER']
+            if os.path.exists(user_data_path):
+                print(f"Checking for User Data files in: {user_data_path}")
+                
+                for participant_id in os.listdir(user_data_path):
+                    participant_path = os.path.join(user_data_path, participant_id)
+                    
+                    if os.path.isdir(participant_path):
+                        participant_files = []
+                        for root, dirs, files in os.walk(participant_path):
+                            participant_files.extend(files)
+                        
+                        if participant_files:  # Only process if files exist
+                            files_found = True
+                            print(f"Found {len(participant_files)} files for participant: {participant_id}")
+                            
+                            for root, dirs, files in os.walk(participant_path):
+                                for file in files:
+                                    file_path = os.path.join(root, file)
+                                    rel_path = os.path.relpath(file_path, user_data_path)
+                                    archive_path = f"User_Data/{rel_path}"
+                                    
+                                    try:
+                                        zip_file.write(file_path, archive_path)
+                                        print(f"Added: {archive_path}")
+                                    except Exception as e:
+                                        print(f"Could not add file {file_path}: {str(e)}")
+            
+            # If no files found, create comprehensive database export
+            if not files_found:
+                print("No user files found - creating database export instead")
+                
+                # Export detailed interaction data
+                interactions = Interaction.query.join(Session).order_by(Session.started_at.desc(), Interaction.created_at.asc()).all()
+                if interactions:
+                    csv_buffer = StringIO()
+                    writer = csv.writer(csv_buffer)
+                    writer.writerow([
+                        'Session_ID', 'Participant_ID', 'Trial_Type', 'Version', 
+                        'Speaker', 'Concept_Name', 'Message', 'Attempt_Number', 
+                        'Interaction_Time', 'Session_Started'
+                    ])
+                    
+                    for interaction in interactions:
+                        session = Session.query.filter_by(session_id=interaction.session_id).first()
+                        writer.writerow([
+                            interaction.session_id,
+                            session.participant_id if session else 'Unknown',
+                            session.trial_type if session else 'Unknown',
+                            session.version if session else 'Unknown',
+                            interaction.speaker,
+                            interaction.concept_name,
+                            interaction.message,
+                            interaction.attempt_number,
+                            interaction.created_at,
+                            session.started_at if session else 'Unknown'
+                        ])
+                    
+                    zip_file.writestr('All_Interactions_Data.csv', csv_buffer.getvalue())
+                
+                # Export participants summary
+                participants = Participant.query.all()
+                if participants:
+                    csv_buffer = StringIO()
+                    writer = csv.writer(csv_buffer)
+                    writer.writerow(['Participant_ID', 'Total_Sessions', 'Total_Interactions', 'Created_At', 'Trial_Types'])
+                    
+                    for p in participants:
+                        sessions = Session.query.filter_by(participant_id=p.participant_id).all()
+                        sessions_count = len(sessions)
+                        trial_types = list(set([s.trial_type for s in sessions if s.trial_type]))
+                        
+                        total_interactions = 0
+                        for s in sessions:
+                            interactions_count = Interaction.query.filter_by(session_id=s.session_id).count()
+                            total_interactions += interactions_count
+                        
+                        writer.writerow([
+                            p.participant_id, 
+                            sessions_count, 
+                            total_interactions, 
+                            p.created_at,
+                            '; '.join(trial_types)
+                        ])
+                    
+                    zip_file.writestr('Participants_Summary.csv', csv_buffer.getvalue())
+                
+                # Add a README explaining the situation
+                readme_content = """HAI V1 Data Export - Database Only
+
+IMPORTANT NOTICE:
+================
+This export contains database records only. Audio/video files are not available 
+due to Render's ephemeral storage system.
+
+WHAT'S INCLUDED:
+===============
+- All_Interactions_Data.csv: Complete conversation logs with timestamps
+- Participants_Summary.csv: Participant statistics and trial information
+
+MISSING DATA:
+=============
+- Audio recordings (user voice inputs)
+- AI-generated audio responses
+- Screen recordings
+- Log files
+
+For future data collection, consider implementing persistent storage 
+(AWS S3, Google Cloud, etc.) to preserve audio/video files.
+
+Export generated: """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                zip_file.writestr('README.txt', readme_content)
+            
+            else:
+                # Files were found, add database summary as well
+                participants = Participant.query.all()
+                if participants:
+                    csv_buffer = StringIO()
+                    writer = csv.writer(csv_buffer)
+                    writer.writerow(['Participant_ID', 'Total_Sessions', 'Total_Interactions', 'Created_At'])
+                    
+                    for p in participants:
+                        sessions_count = Session.query.filter_by(participant_id=p.participant_id).count()
+                        session_ids = [s.session_id for s in Session.query.filter_by(participant_id=p.participant_id).all()]
+                        interactions_count = Interaction.query.filter(Interaction.session_id.in_(session_ids)).count() if session_ids else 0
+                        
+                        writer.writerow([p.participant_id, sessions_count, interactions_count, p.created_at])
+                    
+                    zip_file.writestr('Database_Summary.csv', csv_buffer.getvalue())
+        
+        zip_buffer.seek(0)
+        
+        # Check if zip has meaningful content
+        if zip_buffer.getvalue():
+            from flask import Response
+            filename_prefix = "HAI_V1_Files_Export" if files_found else "HAI_V1_Database_Export"
+            return Response(
+                zip_buffer.getvalue(),
+                mimetype='application/zip',
+                headers={'Content-Disposition': f'attachment; filename={filename_prefix}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'}
+            )
+        else:
+            return jsonify({
+                'status': 'error', 
+                'message': 'No data available for export. Please ensure participants have completed interactions.'
+            }), 404
+        
+    except Exception as e:
+        print(f"Export error: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/export_latest_session')
+def export_latest_session():
+    """Export only the most recent session data for each participant."""
+    try:
+        import zipfile
+        import csv
+        from io import StringIO, BytesIO
+        
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            
+            # Get the most recent session for each participant
+            latest_sessions = []
+            participants = Participant.query.all()
+            
+            for participant in participants:
+                latest_session = Session.query.filter_by(participant_id=participant.participant_id)\
+                                                .order_by(Session.started_at.desc()).first()
+                if latest_session:
+                    latest_sessions.append(latest_session)
+            
+            if latest_sessions:
+                # Export interactions from latest sessions only
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow([
+                    'Participant_ID', 'Session_ID', 'Trial_Type', 'Version',
+                    'Speaker', 'Concept_Name', 'Message', 'Attempt_Number', 
+                    'Interaction_Time', 'Session_Started'
+                ])
+                
+                for session in latest_sessions:
+                    interactions = Interaction.query.filter_by(session_id=session.session_id)\
+                                                      .order_by(Interaction.created_at.asc()).all()
+                    
+                    for interaction in interactions:
+                        writer.writerow([
+                            session.participant_id,
+                            interaction.session_id,
+                            session.trial_type,
+                            session.version,
+                            interaction.speaker,
+                            interaction.concept_name,
+                            interaction.message,
+                            interaction.attempt_number,
+                            interaction.created_at,
+                            session.started_at
+                        ])
+                
+                zip_file.writestr('Latest_Session_Interactions.csv', csv_buffer.getvalue())
+                
+                # Add session summary
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(['Participant_ID', 'Session_ID', 'Trial_Type', 'Version', 'Started_At', 'Total_Interactions'])
+                
+                for session in latest_sessions:
+                    interactions_count = Interaction.query.filter_by(session_id=session.session_id).count()
+                    writer.writerow([
+                        session.participant_id,
+                        session.session_id,
+                        session.trial_type,
+                        session.version,
+                        session.started_at,
+                        interactions_count
+                    ])
+                
+                zip_file.writestr('Latest_Sessions_Summary.csv', csv_buffer.getvalue())
+        
+        zip_buffer.seek(0)
+        
+        if zip_buffer.getvalue():
+            from flask import Response
+            return Response(
+                zip_buffer.getvalue(),
+                mimetype='application/zip',
+                headers={'Content-Disposition': f'attachment; filename=HAI_V1_Latest_Sessions_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'}
+            )
+        else:
+            return jsonify({
+                'status': 'error', 
+                'message': 'No recent session data available for export.'
+            }), 404
+            
+    except Exception as e:
+        print(f"Latest session export error: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/browse_files')
