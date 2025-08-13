@@ -1109,6 +1109,74 @@ def browse_files():
 
 # =========================== END DATA EXPORT FUNCTIONALITY ===========================
 
+@app.route('/diagnostic_filesystem')
+def diagnostic_filesystem():
+    """Diagnostic route to check file system status on Render."""
+    try:
+        diagnostic_info = {
+            'current_working_directory': os.getcwd(),
+            'upload_folder_exists': os.path.exists(UPLOAD_FOLDER),
+            'user_data_folder_exists': os.path.exists(USER_AUDIO_FOLDER),
+            'user_data_folder_path': USER_AUDIO_FOLDER,
+            'folder_contents': {},
+            'disk_info': {},
+            'environment_vars': {
+                'PORT': os.environ.get('PORT', 'Not set'),
+                'RENDER': os.environ.get('RENDER', 'Not set'),
+                'DATABASE_URL': 'Set' if os.environ.get('DATABASE_URL') else 'Not set'
+            }
+        }
+        
+        # Check if folders exist and list contents
+        if os.path.exists(UPLOAD_FOLDER):
+            diagnostic_info['folder_contents']['uploads'] = os.listdir(UPLOAD_FOLDER)
+            
+        if os.path.exists(USER_AUDIO_FOLDER):
+            user_data_contents = []
+            for root, dirs, files in os.walk(USER_AUDIO_FOLDER):
+                rel_path = os.path.relpath(root, USER_AUDIO_FOLDER)
+                user_data_contents.append({
+                    'path': rel_path,
+                    'directories': dirs,
+                    'files': files,
+                    'file_count': len(files)
+                })
+            diagnostic_info['folder_contents']['user_data'] = user_data_contents
+        
+        # Check disk usage if possible
+        try:
+            import shutil
+            total, used, free = shutil.disk_usage('/')
+            diagnostic_info['disk_info'] = {
+                'total_gb': round(total / (1024**3), 2),
+                'used_gb': round(used / (1024**3), 2),
+                'free_gb': round(free / (1024**3), 2)
+            }
+        except:
+            diagnostic_info['disk_info'] = 'Unable to get disk info'
+            
+        # Check recordings in database
+        total_recordings = Recording.query.count()
+        recordings_with_files = Recording.query.filter(Recording.file_path.isnot(None)).count()
+        
+        diagnostic_info['database_info'] = {
+            'total_recordings_in_db': total_recordings,
+            'recordings_with_file_paths': recordings_with_files,
+            'sample_recording_paths': [r.file_path for r in Recording.query.limit(5).all() if r.file_path]
+        }
+        
+        return jsonify({
+            'status': 'success',
+            'diagnostic': diagnostic_info
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'error_type': type(e).__name__
+        }), 500
+
 if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
     port = int(os.environ.get('PORT', 5000))
