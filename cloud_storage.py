@@ -20,16 +20,25 @@ class GoogleCloudUploader:
         self.bucket = None
         
         try:
+            if not credentials_json:
+                credentials_json = os.environ.get('GOOGLE_CLOUD_CREDENTIALS')
+            
             if credentials_json:
-                credentials_dict = json.loads(credentials_json)
+                if isinstance(credentials_json, str):
+                    credentials_dict = json.loads(credentials_json)
+                else:
+                    credentials_dict = credentials_json
+                    
                 credentials = service_account.Credentials.from_service_account_info(credentials_dict)
                 self.client = storage.Client(credentials=credentials)
+                print("Google Cloud Storage initialized with service account credentials")
             else:
                 self.client = storage.Client()
+                print("Google Cloud Storage initialized with default credentials")
             
             if self.bucket_name:
                 self.bucket = self.client.bucket(self.bucket_name)
-                print(f"Google Cloud Storage initialized with bucket: {self.bucket_name}")
+                print(f"Google Cloud Storage bucket connected: {self.bucket_name}")
             else:
                 print("Warning: No bucket name provided for Google Cloud Storage")
                 
