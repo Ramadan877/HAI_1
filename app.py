@@ -1566,7 +1566,6 @@ def trigger_cloud_upload():
             }), 400
         
         if CLOUD_STORAGE_AVAILABLE:
-            # Trigger immediate upload (with minimal delay)
             upload_user_data_to_cloud(participant_id, trial_type, USER_AUDIO_FOLDER, version="V1", delay_seconds=2)
             
             return jsonify({
@@ -1596,14 +1595,12 @@ def on_page_unload():
         if participant_id and trial_type:
             print(f"Page unload detected for participant {participant_id}")
             
-            # Log the page unload event
             try:
                 log_interaction("SYSTEM", "Page_Unload", f"User closed/left page - triggering cloud backup")
                 log_interaction_to_db_only("SYSTEM", "Page_Unload", f"Page unload event for participant {participant_id}")
             except Exception as log_error:
                 print(f"Error logging page unload: {str(log_error)}")
             
-            # Trigger cloud upload with slight delay to ensure all files are saved
             if CLOUD_STORAGE_AVAILABLE:
                 upload_user_data_to_cloud(participant_id, trial_type, USER_AUDIO_FOLDER, version="V1", delay_seconds=3)
             

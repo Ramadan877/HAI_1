@@ -1945,11 +1945,20 @@
                     isUploadTriggered = true;
                     
                     try {
-                        navigator.sendBeacon('/on_page_unload', JSON.stringify({
-                            timestamp: new Date().toISOString(),
-                            trigger: 'page_unload',
-                            version: 'V1'
-                        }));
+                        fetch('/on_page_unload', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                timestamp: new Date().toISOString(),
+                                trigger: 'page_unload',
+                                version: 'V1'
+                            }),
+                            keepalive: true 
+                        }).catch(error => {
+                            console.error('V1: Error triggering cloud upload:', error);
+                        });
                         
                         console.log('V1: Cloud upload triggered on page unload');
                     } catch (error) {
