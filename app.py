@@ -1626,6 +1626,34 @@ def on_page_unload():
 
 # =========================== END CLOUD STORAGE ENDPOINTS ===========================
 
+@app.route('/cloud_status')
+def cloud_status():
+    """Check cloud storage configuration and recent uploads."""
+    try:
+        status_info = {
+            'cloud_storage_available': CLOUD_STORAGE_AVAILABLE,
+            'bucket_configured': bool(os.environ.get('GCS_BUCKET_NAME')),
+            'credentials_configured': bool(os.environ.get('GOOGLE_CLOUD_CREDENTIALS')),
+            'version': 'V1'
+        }
+        
+        if CLOUD_STORAGE_AVAILABLE:
+            from cloud_storage import GoogleCloudUploader
+            try:
+                uploader = GoogleCloudUploader()
+                status_info['bucket_name'] = uploader.bucket_name
+                status_info['connection_test'] = 'success'
+            except Exception as e:
+                status_info['connection_test'] = f'failed: {str(e)}'
+        
+        return jsonify(status_info)
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'cloud_storage_available': False
+        }), 500
+
 if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
     port = int(os.environ.get('PORT', 5000))
