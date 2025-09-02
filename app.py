@@ -51,18 +51,6 @@ from dotenv import load_dotenv
 from database import db, Participant, Session, Interaction, Recording, UserEvent
 import uuid
 
-# Import cloud storage functionality (optional - won't break if module is missing)
-try:
-    from cloud_storage import upload_user_data_to_cloud
-    CLOUD_STORAGE_AVAILABLE = True
-    print("Cloud storage module loaded successfully")
-except ImportError as e:
-    CLOUD_STORAGE_AVAILABLE = False
-    print(f"Cloud storage module not available: {str(e)}")
-    def upload_user_data_to_cloud(*args, **kwargs):
-        print("Cloud storage not available - skipping upload")
-        pass
-
 load_dotenv()
 
 app = Flask(__name__)
@@ -1550,108 +1538,12 @@ def diagnostic_filesystem():
             'error_type': type(e).__name__
         }), 500
 
-# =========================== CLOUD STORAGE ENDPOINTS ===========================
-
-@app.route('/trigger_cloud_upload', methods=['POST'])
-def trigger_cloud_upload():
-    """Manually trigger cloud upload for current participant."""
-    try:
-        participant_id = session.get('participant_id')
-        trial_type = session.get('trial_type')
-        
-        if not participant_id or not trial_type:
-            return jsonify({
-                'status': 'error',
-                'message': 'No active participant session found'
-            }), 400
-        
-        if CLOUD_STORAGE_AVAILABLE:
-            upload_user_data_to_cloud(participant_id, trial_type, USER_AUDIO_FOLDER, version="V1", delay_seconds=2)
-            
-            return jsonify({
-                'status': 'success',
-                'message': f'Cloud upload initiated for participant {participant_id}'
-            })
-        else:
-            return jsonify({
-                'status': 'info',
-                'message': 'Cloud storage not configured'
-            })
-        
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/on_page_unload', methods=['POST'])
-def on_page_unload():
-    """Handle page unload event - trigger cloud upload."""
-    try:
-        data = request.get_json() or {}
-        participant_id = session.get('participant_id')
-        trial_type = session.get('trial_type')
-        
-        if participant_id and trial_type:
-            print(f"Page unload detected for participant {participant_id}")
-            
-            try:
-                log_interaction("SYSTEM", "Page_Unload", f"User closed/left page - triggering cloud backup")
-                log_interaction_to_db_only("SYSTEM", "Page_Unload", f"Page unload event for participant {participant_id}")
-            except Exception as log_error:
-                print(f"Error logging page unload: {str(log_error)}")
-            
-            if CLOUD_STORAGE_AVAILABLE:
-                upload_user_data_to_cloud(participant_id, trial_type, USER_AUDIO_FOLDER, version="V1", delay_seconds=3)
-            
-            return jsonify({
-                'status': 'success',
-                'message': 'Page unload processed, cloud backup initiated' if CLOUD_STORAGE_AVAILABLE else 'Page unload processed (cloud storage not available)'
-            })
-        else:
-            return jsonify({
-                'status': 'info',
-                'message': 'No active session to backup'
-            })
-            
-    except Exception as e:
-        print(f"Error in page unload handler: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-# =========================== END CLOUD STORAGE ENDPOINTS ===========================
-
-@app.route('/cloud_status')
-def cloud_status():
-    """Check cloud storage configuration and recent uploads."""
-    try:
-        status_info = {
-            'cloud_storage_available': CLOUD_STORAGE_AVAILABLE,
-            'bucket_configured': bool(os.environ.get('GCS_BUCKET_NAME')),
-            'credentials_configured': bool(os.environ.get('GOOGLE_CLOUD_CREDENTIALS')),
-            'version': 'V1'
-        }
-        
-        if CLOUD_STORAGE_AVAILABLE:
-            from cloud_storage import GoogleCloudUploader
-            try:
-                uploader = GoogleCloudUploader()
-                status_info['bucket_name'] = uploader.bucket_name
-                status_info['connection_test'] = 'success'
-            except Exception as e:
-                status_info['connection_test'] = f'failed: {str(e)}'
-        
-        return jsonify(status_info)
-        
-    except Exception as e:
-        return jsonify({
-            'error': str(e),
-            'cloud_storage_available': False
-        }), 500
-
 if __name__ == '__main__':
+    startup_interaction_id = get_interaction_id()
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+
     startup_interaction_id = get_interaction_id()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

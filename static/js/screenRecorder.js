@@ -1,7 +1,7 @@
 let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
-let isSaving = false; 
+let isSaving = false;
 
 async function startScreenRecording() {
     try {
