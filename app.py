@@ -64,6 +64,9 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 app.secret_key = os.environ.get('SECRET_KEY', 'fallback-secret-key')
 
+# Configuration for handling large screen recordings (up to 500MB)
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB limit for long recordings
+
 db.init_app(app)
 
 with app.app_context():
@@ -396,20 +399,45 @@ def save_screen_recording():
         screen_recordings_dir = folders['screen_recordings_folder']
         os.makedirs(screen_recordings_dir, exist_ok=True)
         
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'screen_recording_{timestamp}.webm'
+        # Use original filename if provided, otherwise generate timestamp-based name
+        original_filename = screen_recording.filename or 'screen_recording.webm'
+        if original_filename.startswith('screen_recording_') and original_filename.endswith('.webm'):
+            filename = original_filename  # Use the timestamped filename from client
+        else:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f'screen_recording_{timestamp}.webm'
+            
         filepath = os.path.join(screen_recordings_dir, filename)
         
         app.logger.info(f'Saving screen recording to: {filepath}')
         
-        screen_recording.save(filepath)
-        
-        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-            app.logger.info(f'Screen recording saved successfully: {filepath}')
-            return 'OK', 200
-        else:
-            app.logger.error('Failed to save screen recording - file not created or empty')
-            return jsonify({'error': 'Failed to save screen recording'}), 500
+        # Save file with better handling for large files
+        try:
+            screen_recording.save(filepath)
+            
+            # Verify file was saved properly
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                if file_size > 0:
+                    size_mb = round(file_size / (1024 * 1024), 2)
+                    app.logger.info(f'Screen recording saved successfully: {filepath} ({size_mb}MB)')
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': 'Screen recording uploaded successfully',
+                        'filename': filename,
+                        'size_mb': size_mb
+                    }), 200
+                else:
+                    app.logger.error('Screen recording file is empty')
+                    return jsonify({'error': 'Screen recording file is empty'}), 500
+            else:
+                app.logger.error('Screen recording file was not created')
+                return jsonify({'error': 'Failed to save screen recording file'}), 500
+                
+        except Exception as save_error:
+            app.logger.error(f'Error saving file: {str(save_error)}')
+            return jsonify({'error': f'Error saving file: {str(save_error)}'}), 500
         
     except Exception as e:
         app.logger.error(f"Error saving screen recording: {str(e)}")
