@@ -347,8 +347,12 @@ def log_interaction(speaker, concept_name, message):
         return False
     
 def get_audio_filename(prefix, participant_id, interaction_number, extension='.mp3'):
-    """Generate a unique audio filename with participant ID and interaction number."""
-    return f"{prefix}_{interaction_number}_{participant_id}{extension}"
+    """Generate a unique audio filename with participant ID, concept name, and interaction number."""
+    import inspect
+    frame = inspect.currentframe().f_back
+    concept_name = frame.f_locals.get('concept_name', None)
+    concept_part = f"_{secure_filename(concept_name)}" if concept_name else ""
+    return f"{prefix}{concept_part}_{interaction_number}_{participant_id}{extension}"
 
 def generate_audio(text, file_path):
     """Generate speech (audio) from the provided text using gTTS with proper file handling."""
