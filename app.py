@@ -1277,7 +1277,7 @@ def export_complete_data():
             return Response(
                 zip_buffer.getvalue(),
                 mimetype='application/zip',
-                headers={'Content-Disposition': f'attachment; filename={filename_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip'}
+                headers={'Content-Disposition': f'attachment; filename={filename_prefix}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'}
             )
         else:
             return jsonify({
