@@ -113,7 +113,6 @@ async function startScreenRecording() {
         };
         
 
-        mediaRecorder.start(); 
     mediaRecorder.start(10000); // 10 seconds timeslice for robust long recordings
     isRecording = true;
     console.log('Long-duration recording started successfully (continuous mode, 10s chunks)');
