@@ -5,6 +5,8 @@ let isSaving = false;
 let recordingStream = null;
 let recordingStartTime = null;
 let recordingTimer = null;
+let chunkCounter = 0;
+let chunkBaseFilename = null;
 
 function checkRecordingStatus() {
     if (mediaRecorder) {
@@ -61,18 +63,49 @@ async function startScreenRecording() {
         mediaRecorder = new MediaRecorder(recordingStream, options);
         recordedChunks = [];
         
-        mediaRecorder.ondataavailable = (event) => {
-            if (event.data && event.data.size > 0) {
-                recordedChunks.push(event.data);
-                console.log(`Recording chunk ${recordedChunks.length}: ${event.data.size} bytes`);
-                
-                if (recordedChunks.length % 5 === 0) {
-                    const totalSize = recordedChunks.reduce((sum, chunk) => sum + chunk.size, 0);
-                    const elapsed = Math.round((Date.now() - recordingStartTime) / 1000);
-                    console.log(`Recording progress: ${recordedChunks.length} chunks, ${Math.round(totalSize/1024/1024)}MB, ${elapsed}s`);
+        mediaRecorder.ondataavailable = async (event) => {
+            try {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                    console.log(`Recording chunk ${recordedChunks.length}: ${event.data.size} bytes`);
+
+                    // Upload each chunk as it arrives to avoid large memory usage and support long recordings
+                    try {
+                        if (!chunkBaseFilename) {
+                            const ts = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
+                            chunkBaseFilename = `screen_recording_${ts}`;
+                        }
+
+                        const chunkFilename = `${chunkBaseFilename}_part${chunkCounter}.webm`;
+                        chunkCounter += 1;
+
+                        // Send chunk to server (fire-and-forget but await to catch errors)
+                        const fd = new FormData();
+                        fd.append('screen_recording', event.data, chunkFilename);
+                        fd.append('trial_type', window.currentTrialType);
+                        fd.append('participant_id', window.participantId);
+
+                        const resp = await fetch('/save_screen_recording', { method: 'POST', body: fd });
+                        if (!resp.ok) {
+                            console.warn('Chunk upload failed', resp.status);
+                        } else {
+                            const json = await resp.json().catch(()=>null);
+                            console.log('Uploaded chunk', chunkFilename, json ? json.message : 'OK');
+                        }
+                    } catch (uploadErr) {
+                        console.error('Chunk upload error:', uploadErr);
+                    }
+
+                    if (recordedChunks.length % 5 === 0) {
+                        const totalSize = recordedChunks.reduce((sum, chunk) => sum + chunk.size, 0);
+                        const elapsed = Math.round((Date.now() - recordingStartTime) / 1000);
+                        console.log(`Recording progress: ${recordedChunks.length} chunks, ${Math.round(totalSize/1024/1024)}MB, ${elapsed}s`);
+                    }
+                } else {
+                    console.log('Received empty data chunk - this is normal for continuous recording');
                 }
-            } else {
-                console.log('Received empty data chunk - this is normal for continuous recording');
+            } catch(err) {
+                console.error('ondataavailable handler error:', err);
             }
         };
         

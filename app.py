@@ -412,6 +412,14 @@ def save_screen_recording():
             filename = f'screen_recording_{timestamp}.webm'
             
         filepath = os.path.join(screen_recordings_dir, filename)
+        # Avoid overwriting if chunk already exists
+        if os.path.exists(filepath):
+            base, ext = os.path.splitext(filename)
+            counter = 1
+            while os.path.exists(os.path.join(screen_recordings_dir, f"{base}_{counter}{ext}")):
+                counter += 1
+            filename = f"{base}_{counter}{ext}"
+            filepath = os.path.join(screen_recordings_dir, filename)
         
         app.logger.info(f'Saving screen recording to: {filepath}')
         
