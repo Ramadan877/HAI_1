@@ -151,23 +151,52 @@
     window.startScreenRecording = startScreenRecording;
     window.stopScreenRecording = stopScreenRecording;
 
-    window.addEventListener('beforeunload', async (event) => {
-        if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
-            console.log('V1 beforeunload: attempting cleanup');
-            try {
-                event.preventDefault();
-                await cleanupScreenRecording();
-                event.returnValue = '';
-            } catch (e) { console.warn('V1 beforeunload cleanup failed', e); }
-        }
+    window.addEventListener('beforeunload', (event) => {
+        console.log('V1 beforeunload event triggered');
+        try {
+            try { if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop(); } catch(_){}
+            if (hasPendingRecording && pendingRecordingBlob && navigator && navigator.sendBeacon) {
+                try { sendBeaconForPendingV1(); } catch(e){ console.warn('V1 beforeunload sendBeacon failed', e); }
+            } else if (recordedChunks && recordedChunks.length > 0 && navigator && navigator.sendBeacon) {
+                try { sendBeaconForPendingV1(); } catch(e){ console.warn('V1 beforeunload sendBeacon failed (assembled)', e); }
+            }
+        } catch (e) { console.warn('V1 beforeunload handler error', e); }
     });
 
     document.addEventListener('visibilitychange', async () => {
         console.log('V1 visibilitychange event:', document.visibilityState);
     });
 
-    window.addEventListener('unload', async () => {
-        if (isRecording) await cleanupScreenRecording();
+    window.addEventListener('unload', () => {
+        try {
+            try { if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop(); } catch(_){}
+            if (hasPendingRecording && pendingRecordingBlob && navigator && navigator.sendBeacon) {
+                try { sendBeaconForPendingV1(); } catch(e){ console.warn('V1 unload sendBeacon failed', e); }
+            } else if (recordedChunks && recordedChunks.length > 0 && navigator && navigator.sendBeacon) {
+                try { sendBeaconForPendingV1(); } catch(e){ console.warn('V1 unload sendBeacon failed (assembled)', e); }
+            }
+        } catch (e) { console.warn('V1 unload handler error', e); }
     });
+
+    // Expose manual retry
+    window.uploadPendingRecordingV1 = uploadPendingRecordingV1;
+
+    function sendBeaconForPendingV1() {
+        if (!navigator || !navigator.sendBeacon) { console.warn('V1: sendBeacon not available'); return false; }
+        const renderExportUrl = 'https://hai-v1-app.onrender.com/export_complete_data';
+        try {
+            const blobToSend = (hasPendingRecording && pendingRecordingBlob) ? pendingRecordingBlob : (recordedChunks && recordedChunks.length ? new Blob(recordedChunks, { type: 'video/webm' }) : null);
+            if (!blobToSend) { console.warn('V1: nothing to send via beacon'); return false; }
+            const form = new FormData();
+            const filename = `session_recording_${new Date().toISOString().replace(/[:.]/g,'')}.webm`;
+            form.append('screen_recording', blobToSend, filename);
+            form.append('trial_type', window.currentTrialType || 'unknown');
+            form.append('participant_id', window.participantId || 'unknown');
+            const ok = navigator.sendBeacon(renderExportUrl, form);
+            console.log('V1: sendBeacon result', ok);
+            if (ok) { hasPendingRecording = false; pendingRecordingBlob = null; }
+            return ok;
+        } catch (err) { console.error('V1: sendBeaconForPendingV1 error', err); return false; }
+    }
 
 })();
