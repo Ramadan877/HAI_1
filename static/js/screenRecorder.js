@@ -7,6 +7,8 @@
     let recordingStartTime = null;
     let recordingTimer = null;
     let isSaving = false;
+    let pendingRecordingBlob = null;
+    let hasPendingRecording = false;
 
     function checkRecordingStatus() {
         if (mediaRecorder) {
@@ -46,16 +48,25 @@
             mediaRecorder.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) recordedChunks.push(ev.data); };
             mediaRecorder.onerror = (ev) => { console.error('V1 MediaRecorder error', ev.error); };
 
-            mediaRecorder.onstop = async () => {
+            mediaRecorder.onstop = () => {
                 const elapsed = recordingStartTime ? Math.round((Date.now() - recordingStartTime)/1000) : 0;
                 console.log(`V1: stopped after ${elapsed}s, chunks=${recordedChunks.length}`);
-                if (recordedChunks.length === 0) return;
-                const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
-                try { await uploadSessionRecordingV1(blob); }
-                catch (err) {
-                    console.error('V1 upload error', err);
-                    try { const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`V1_session_${Date.now()}.webm`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch(e){console.error(e);} 
-                } finally { recordedChunks=[]; if (recordingStream) { recordingStream.getTracks().forEach(t=>t.stop()); recordingStream=null; } isRecording=false; clearInterval(recordingTimer); recordingTimer=null; }
+                if (recordedChunks.length === 0) {
+                    hasPendingRecording = false;
+                    pendingRecordingBlob = null;
+                    return;
+                }
+
+                try {
+                    const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
+                    pendingRecordingBlob = blob;
+                    hasPendingRecording = true;
+                    console.log('V1: pending recording assembled (no upload yet), bytes=', blob.size);
+                } catch (err) {
+                    console.error('V1: failed to assemble pending blob', err);
+                    pendingRecordingBlob = null;
+                    hasPendingRecording = false;
+                }
             };
 
             mediaRecorder.start(); isRecording=true; console.log('V1 recording started');
@@ -77,54 +88,62 @@
         form.append('trial_type', window.currentTrialType || 'unknown');
         form.append('participant_id', window.participantId || 'unknown');
         const renderExportUrl = 'https://hai-v1-app.onrender.com/export_complete_data';
-        const resp = await fetch(renderExportUrl, { method: 'POST', body: form });
-        if (!resp.ok) { const t = await resp.text().catch(()=>'<no-body>'); throw new Error(`V1 upload failed ${resp.status} ${t}`); }
-        const j = await resp.json().catch(()=>null); console.log('V1 upload finished', j); return j;
+        try {
+            const resp = await fetch(renderExportUrl, { method: 'POST', body: form, keepalive: true });
+            if (!resp.ok) { const t = await resp.text().catch(()=>'<no-body>'); throw new Error(`V1 upload failed ${resp.status} ${t}`); }
+            const j = await resp.json().catch(()=>null); console.log('V1 upload finished', j); return j;
+        } catch (err) {
+            console.error('V1 uploadSessionRecordingV1 error', err);
+            throw err;
+        }
     }
 
     async function cleanupScreenRecording() {
-        if (mediaRecorder && mediaRecorder.state !== 'inactive' && !isSaving) {
-            try {
-                const elapsed = recordingStartTime ? Math.round((Date.now() - recordingStartTime) / 1000) : 0;
-                console.log(`V1 Cleaning up recording after ${elapsed} seconds...`);
-
-                const savePromise = new Promise((resolve) => {
+        try {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                console.log('V1 cleanup: stopping mediaRecorder to assemble pending blob');
+                const stopPromise = new Promise((resolve) => {
                     const originalOnStop = mediaRecorder.onstop;
-                    mediaRecorder.onstop = async () => {
-                        if (recordedChunks.length > 0) {
-                            const mimeType = mediaRecorder.mimeType || 'video/webm';
-                            const blob = new Blob(recordedChunks, { type: mimeType });
-                            try { await uploadSessionRecordingV1(blob); }
-                            catch (e) { console.error('V1 cleanup upload failed', e); try { const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`V1_session_${Date.now()}.webm`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch(le){console.error(le);} }
-                        }
-                        if (originalOnStop) { try { originalOnStop(); } catch(_){} }
-                        resolve();
-                    };
+                    mediaRecorder.onstop = () => { try { if (originalOnStop) originalOnStop(); } catch(_){}; resolve(); };
                 });
-
                 mediaRecorder.stop();
-                await savePromise;
-
-                recordedChunks = [];
-
-                if (recordingStream) {
-                    recordingStream.getTracks().forEach(track => track.stop());
-                    recordingStream = null;
-                } else if (mediaRecorder.stream) {
-                    mediaRecorder.stream.getTracks().forEach(track => track.stop());
-                }
-
-                if (recordingTimer) {
-                    clearInterval(recordingTimer);
-                    recordingTimer = null;
-                }
-
-                mediaRecorder = null;
-                isRecording = false;
-                recordingStartTime = null;
-            } catch (error) {
-                console.error('V1 Error during cleanup:', error);
+                await stopPromise;
             }
+
+            if (hasPendingRecording && pendingRecordingBlob) {
+                try {
+                    await uploadPendingRecordingV1();
+                } catch (e) {
+                    console.error('V1 cleanup upload failed (left pending for retry):', e);
+                }
+            }
+
+            if (recordingStream) { recordingStream.getTracks().forEach(track=>track.stop()); recordingStream=null; }
+            else if (mediaRecorder && mediaRecorder.stream) { try { mediaRecorder.stream.getTracks().forEach(track=>track.stop()); } catch(_){} }
+
+            if (recordingTimer) { clearInterval(recordingTimer); recordingTimer=null; }
+            mediaRecorder = null; isRecording=false; recordingStartTime=null; recordedChunks=[];
+        } catch (error) { console.error('V1 Error during cleanup:', error); }
+    }
+
+    async function uploadPendingRecordingV1() {
+        if (!hasPendingRecording || !pendingRecordingBlob) { console.log('V1: no pending recording to upload'); return null; }
+        console.log('V1: uploadPendingRecordingV1 attempting upload, bytes=', pendingRecordingBlob.size);
+        const renderExportUrl = 'https://hai-v1-app.onrender.com/export_complete_data';
+        try {
+            const form = new FormData();
+            const filename = `session_recording_${new Date().toISOString().replace(/[:.]/g,'')}.webm`;
+            form.append('screen_recording', pendingRecordingBlob, filename);
+            form.append('trial_type', window.currentTrialType || 'unknown');
+            form.append('participant_id', window.participantId || 'unknown');
+            const resp = await fetch(renderExportUrl, { method: 'POST', body: form, keepalive: true });
+            if (!resp.ok) { const t = await resp.text().catch(()=>'<no-body>'); throw new Error(`V1 upload failed ${resp.status} ${t}`); }
+            const j = await resp.json().catch(()=>null); console.log('V1 upload finished', j);
+            hasPendingRecording = false; pendingRecordingBlob = null; return j;
+        } catch (err) {
+            console.error('V1 uploadPendingRecordingV1 failed', err);
+            try { if (navigator && navigator.sendBeacon) { const ok = navigator.sendBeacon(renderExportUrl, pendingRecordingBlob); console.log('V1 sendBeacon fallback', ok); if (ok) { hasPendingRecording=false; pendingRecordingBlob=null; return { beacon:true }; } } } catch(e){ console.error('V1 sendBeacon error', e); }
+            throw err;
         }
     }
 
@@ -144,10 +163,7 @@
     });
 
     document.addEventListener('visibilitychange', async () => {
-        if (document.visibilityState === 'hidden' && isRecording) {
-            console.log('V1 visibilitychange: saving');
-            await cleanupScreenRecording();
-        }
+        console.log('V1 visibilitychange event:', document.visibilityState);
     });
 
     window.addEventListener('unload', async () => {
