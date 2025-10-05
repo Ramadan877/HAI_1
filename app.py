@@ -357,26 +357,36 @@ def get_audio_filename(prefix, participant_id, interaction_number, extension='.m
 
 def generate_audio(text, file_path):
     """Generate speech (audio) from the provided text using gTTS with proper file handling."""
-    temp_file = None
     try:
+        # Try OpenAI TTS first (if configured)
+        try:
+            audio_bytes, content_type = synthesize_with_openai(ssml_wrap(text), voice='alloy', fmt='mp3')
+            if audio_bytes:
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                with open(file_path, 'wb') as f:
+                    f.write(audio_bytes)
+                print(f"V1: Audio file (OpenAI TTS) saved: {file_path}")
+                return True
+        except Exception as openai_err:
+            print(f"V1: OpenAI TTS unavailable or failed: {openai_err}. Falling back to gTTS.")
+
+        # Fallback to gTTS (existing behavior)
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
             temp_path = temp_file.name
-        
+
         tts = gTTS(text=text, lang='en', slow=False)
         tts.save(temp_path)
-        
+
         if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
             if os.path.exists(file_path):
                 os.remove(file_path)
             shutil.move(temp_path, file_path)
             return True
-                
+
         return False
-                
     except Exception as e:
-        print(f"Error generating audio: {str(e)}")
+        print(f"V1: Error generating audio: {str(e)}")
         return False
 
 @app.route('/save_screen_recording', methods=['POST'])
@@ -385,7 +395,6 @@ def save_screen_recording():
         app.logger.info(f"Received screen recording request. Files: {list(request.files.keys())}")
         app.logger.info(f"Form data: {list(request.form.keys())}")
 
-        # Support multipart/form-data and raw POST body (sendBeacon)
         screen_recording = None
         trial_type = None
         participant_id = None
@@ -419,16 +428,14 @@ def save_screen_recording():
         screen_recordings_dir = folders['screen_recordings_folder']
         os.makedirs(screen_recordings_dir, exist_ok=True)
         
-        # Use original filename if provided, otherwise generate timestamp-based name
         original_filename = getattr(screen_recording, 'filename', None) or 'screen_recording.webm'
         if original_filename.startswith('screen_recording_') and original_filename.endswith('.webm'):
-            filename = original_filename  # Use the timestamped filename from client
+            filename = original_filename  
         else:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f'session_recording_{timestamp}.webm'
 
         filepath = os.path.join(screen_recordings_dir, filename)
-        # Avoid overwriting if chunk already exists
         if os.path.exists(filepath):
             base, ext = os.path.splitext(filename)
             counter = 1
@@ -439,9 +446,7 @@ def save_screen_recording():
         
         app.logger.info(f'Saving screen recording to: {filepath}')
         
-        # Save file with better handling for large files
         try:
-            # If BytesIO-like (sendBeacon), write bytes directly
             if hasattr(screen_recording, 'read') and not hasattr(screen_recording, 'save'):
                 with open(filepath, 'wb') as out_f:
                     screen_recording.seek(0)
@@ -449,7 +454,6 @@ def save_screen_recording():
             else:
                 screen_recording.save(filepath)
             
-            # Verify file was saved properly
             if os.path.exists(filepath):
                 file_size = os.path.getsize(filepath)
                 if file_size > 0:
@@ -1389,6 +1393,45 @@ def export_complete_data():
             }), 404
     except Exception as e:
         print(f"Export error: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/diagnose_uploads')
+def diagnose_uploads():
+    """Return a JSON summary of upload folders and environment info for debugging."""
+    try:
+        def sample_files(base, limit=50):
+            out = []
+            if not base or not os.path.exists(base):
+                return out
+            for root, dirs, files in os.walk(base):
+                for f in files:
+                    path = os.path.join(root, f)
+                    try:
+                        out.append({'path': os.path.relpath(path, base), 'size': os.path.getsize(path), 'mtime': os.path.getmtime(path)})
+                    except Exception:
+                        out.append({'path': os.path.relpath(path, base), 'size': None, 'mtime': None})
+                    if len(out) >= limit:
+                        return out
+            return out
+
+        upload_folder = app.config.get('UPLOAD_FOLDER')
+        user_audio_folder = app.config.get('USER_AUDIO_FOLDER')
+        concept_audio_folder = app.config.get('CONCEPT_AUDIO_FOLDER')
+
+        data = {
+            'upload_folder': upload_folder,
+            'upload_exists': os.path.exists(upload_folder) if upload_folder else False,
+            'user_audio_folder': user_audio_folder,
+            'user_audio_exists': os.path.exists(user_audio_folder) if user_audio_folder else False,
+            'concept_audio_folder': concept_audio_folder,
+            'concept_audio_exists': os.path.exists(concept_audio_folder) if concept_audio_folder else False,
+            'sample_upload_files': sample_files(upload_folder, limit=200),
+            'sample_user_audio_files': sample_files(user_audio_folder, limit=200),
+            'openai_api_key_present': bool(os.environ.get('OPENAI_API_KEY')),
+        }
+        return jsonify({'status': 'ok', 'diagnostic': data})
+    except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/export_latest_session')

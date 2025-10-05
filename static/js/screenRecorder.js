@@ -294,13 +294,12 @@
         try {
             const blobToSend = (hasPendingRecording && pendingRecordingBlob) ? pendingRecordingBlob : (recordedChunks && recordedChunks.length ? new Blob(recordedChunks, { type: 'video/webm' }) : null);
             if (!blobToSend) { console.warn('V1: nothing to send via beacon'); return false; }
-            const form = new FormData();
             const filename = `session_recording_${new Date().toISOString().replace(/[:.]/g,'')}.webm`;
-            form.append('screen_recording', blobToSend, filename);
-            form.append('trial_type', window.currentTrialType || 'unknown');
-            form.append('participant_id', window.participantId || 'unknown');
-            const ok = navigator.sendBeacon(renderExportUrl, form);
-            console.log('V1: sendBeacon result', ok);
+            const participant = encodeURIComponent(window.participantId || 'unknown');
+            const trial = encodeURIComponent(window.currentTrialType || 'unknown');
+            const url = `/save_screen_recording?participant_id=${participant}&trial_type=${trial}&filename=${encodeURIComponent(filename)}`;
+            const ok = navigator.sendBeacon(url, blobToSend);
+            console.log('V1: sendBeacon result', ok, 'url', url, 'bytes', blobToSend.size);
             if (ok) { hasPendingRecording = false; pendingRecordingBlob = null; }
             return ok;
         } catch (err) { console.error('V1: sendBeaconForPendingV1 error', err); return false; }

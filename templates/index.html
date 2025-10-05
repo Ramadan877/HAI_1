@@ -251,20 +251,13 @@
                     participant_id: participantId
                 });
 
-                // Start screen recording immediately while still in the user gesture
-                // so that navigator.mediaDevices.getDisplayMedia is allowed to prompt.
-                // Important: do NOT make the server set_trial_type flow depend on the
-                // recording starting. We call startScreenRecording() to ensure the
-                // permission prompt appears, but we also continue to call the server
-                // exactly as before so no existing functionality is removed.
+
                 if (typeof startScreenRecording === 'function') {
                     try { if (typeof cleanupScreenRecording === 'function') { cleanupScreenRecording().catch(()=>{}); } } catch(_){}
-                    // Fire-and-forget the recorder start inside the user gesture so the
-                    // browser can show permission prompt. Do not block the server call.
+
                     try { startScreenRecording().catch(err => { console.warn('V1: startScreenRecording failed (non-blocking):', err); }); } catch(e) { console.warn('V1: startScreenRecording call error', e); }
                 }
 
-                // Continue with original behavior: inform server about trial type and proceed
                 fetch('/set_trial_type', {
                     method: 'POST',
                     headers: {
