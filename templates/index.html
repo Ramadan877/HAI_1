@@ -226,24 +226,24 @@
 
             window.startWithTrial = function(trialType) {
                 if (appStarted || isSubmitting) return false;
-                
+
                 const participantId = document.getElementById('participant-id').value.trim();
                 if (!participantId) {
                     alert('Please enter a Participant ID');
                     return false;
                 }
-                
-                logInteractionEvent('BUTTON_CLICK', { 
+
+                logInteractionEvent('BUTTON_CLICK', {
                     button: 'start_trial',
                     trial_type: trialType,
                     participant_id: participantId,
                     timestamp: new Date().toISOString()
                 });
-                
+
                 isSubmitting = true;
                 const buttons = document.querySelectorAll('.start-trial-btn');
                 buttons.forEach(btn => btn.disabled = true);
-                
+
                 window.participantId = participantId;
                 window.currentTrialType = trialType;
                 console.log('Starting trial with:', {
@@ -251,6 +251,20 @@
                     participant_id: participantId
                 });
 
+                // Start screen recording immediately while still in the user gesture
+                // so that navigator.mediaDevices.getDisplayMedia is allowed to prompt.
+                // Important: do NOT make the server set_trial_type flow depend on the
+                // recording starting. We call startScreenRecording() to ensure the
+                // permission prompt appears, but we also continue to call the server
+                // exactly as before so no existing functionality is removed.
+                if (typeof startScreenRecording === 'function') {
+                    try { if (typeof cleanupScreenRecording === 'function') { cleanupScreenRecording().catch(()=>{}); } } catch(_){}
+                    // Fire-and-forget the recorder start inside the user gesture so the
+                    // browser can show permission prompt. Do not block the server call.
+                    try { startScreenRecording().catch(err => { console.warn('V1: startScreenRecording failed (non-blocking):', err); }); } catch(e) { console.warn('V1: startScreenRecording call error', e); }
+                }
+
+                // Continue with original behavior: inform server about trial type and proceed
                 fetch('/set_trial_type', {
                     method: 'POST',
                     headers: {
@@ -268,33 +282,24 @@
                     return response.json();
                 })
                 .then(data => {
-                    if (data.status === 'success') {
-                        currentTrialType = trialType;
-                        console.log(`Starting with trial type: ${trialType}, Participant ID: ${participantId}`);
-                        
-                        if (typeof cleanupScreenRecording === 'function') {
-                            cleanupScreenRecording().then(() => {
-                                if (typeof startScreenRecording === 'function') {
-                                    startScreenRecording();
-                                }
-                            });
+                        if (data.status === 'success') {
+                            currentTrialType = trialType;
+                            console.log(`Starting with trial type: ${trialType}, Participant ID: ${participantId}`);
+                            startOverlay.style.opacity = "0";
+                            setTimeout(() => {
+                                startOverlay.style.display = "none";
+                                readyOverlay.classList.add('show');
+                            }, 500);
                         }
-                        
-                        startOverlay.style.opacity = "0";
-                        setTimeout(() => {
-                            startOverlay.style.display = "none";
-                            readyOverlay.classList.add('show');
-                        }, 500);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('Error starting trial: ' + error.message);
-                })
-                .finally(() => {
-                    isSubmitting = false;
-                    buttons.forEach(btn => btn.disabled = false);
-                });
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('Error starting trial: ' + error.message);
+                    })
+                    .finally(() => {
+                        isSubmitting = false;
+                        buttons.forEach(btn => btn.disabled = false);
+                    });
 
                 return false;
             };
