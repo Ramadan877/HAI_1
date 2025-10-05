@@ -2,6 +2,7 @@ from flask import Flask, request, render_template, jsonify, session, send_from_d
 from werkzeug.utils import secure_filename
 from flask_cors import CORS 
 import openai
+import requests
 import os
 import re
 from gtts import gTTS
@@ -459,6 +460,75 @@ def save_screen_recording():
 def health_check():
     """Health check endpoint for deployment platforms."""
     return jsonify({'status': 'healthy', 'service': 'HAI V1'}), 200
+
+
+def synthesize_with_openai(text, voice='alloy', fmt='mp3'):
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if not api_key:
+        raise RuntimeError('OpenAI API key not configured')
+    url = 'https://api.openai.com/v1/audio/speech'
+    headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+    payload = {'model': 'gpt-4o-mini-tts', 'voice': voice, 'input': text}
+    resp = requests.post(url, headers=headers, json=payload, stream=True, timeout=60)
+    resp.raise_for_status()
+    audio_bytes = resp.content
+    content_type = 'audio/mpeg' if fmt.lower() in ('mp3','mpeg') else 'audio/webm'
+    return audio_bytes, content_type
+
+
+def ssml_wrap(text, rate='0%', pitch='0%', break_ms=250):
+    """Wrap text in a small SSML template to improve TTS prosody.
+    This escapes XML special chars and inserts small breaks after punctuation.
+    If SSML generation fails, return original text.
+    """
+    try:
+        def esc(t):
+            return (t.replace('&', '&amp;')
+                     .replace('<', '&lt;')
+                     .replace('>', '&gt;')
+                     .replace('"', '&quot;')
+                     .replace("'", '&apos;'))
+
+        safe_text = esc(text)
+        import re
+        safe_text = re.sub(r'([\.\?\!])\s+', r"\1 <break time=\"%dms\"/> " % break_ms, safe_text)
+        safe_text = re.sub(r',\s+', r', <break time=\"%dms\"/> ' % int(break_ms/2), safe_text)
+
+        ssml = f"<speak><prosody rate='-{abs(int(rate.strip('%') if isinstance(rate,str) and rate.endswith('%') else 0))}%' pitch='{pitch}'>" + safe_text + "</prosody></speak>"
+        return ssml
+    except Exception as e:
+        print('SSML wrap failed:', str(e))
+        return text
+
+
+@app.route('/synthesize', methods=['POST'])
+def synthesize():
+    try:
+        data = request.get_json() or request.form
+        text = data.get('text') if data else None
+        if not text:
+            return jsonify({'error': 'No text provided'}), 400
+        voice = data.get('voice', 'alloy')
+        fmt = data.get('format', 'mp3')
+        try:
+            ssml_text = ssml_wrap(text, rate='5%', pitch='0%', break_ms=220)
+            audio_bytes, content_type = synthesize_with_openai(ssml_text, voice=voice, fmt=fmt)
+            return (audio_bytes, 200, {'Content-Type': content_type, 'Content-Disposition': 'inline; filename="tts.' + fmt + '"'})
+        except Exception as openai_err:
+            print('OpenAI TTS failed or rejected SSML, falling back to gTTS:', str(openai_err))
+        try:
+            from io import BytesIO
+            bio = BytesIO()
+            tts = gTTS(text=text, lang='en')
+            tts.write_to_fp(bio)
+            bio.seek(0)
+            return (bio.read(), 200, {'Content-Type': 'audio/mpeg', 'Content-Disposition': 'inline; filename="tts.mp3"'})
+        except Exception as e:
+            print('gTTS fallback failed:', str(e))
+            return jsonify({'error': 'TTS synthesis failed'}), 500
+    except Exception as e:
+        print('Synthesize endpoint error:', str(e))
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/')
 def home():

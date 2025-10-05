@@ -1615,16 +1615,43 @@
                 
                 const audio = document.createElement('audio');
                 audio.preload = 'metadata';
-                audio.src = audioUrl;
-                audio.load();
 
-                if (audioUrl.startsWith('blob:')) {
-                    audio.src = audioUrl;
+                // Original behavior: set the audio.src directly to the server file or blob.
+                // audio.src = audioUrl;
+                // audio.load();
+                // if (audioUrl.startsWith('blob:')) {
+                //     audio.src = audioUrl;
+                // } else {
+                //     audio.src = audioUrl.startsWith('/uploads/') ? audioUrl : `/uploads/${audioUrl}`;
+                // }
+                // audio.controls = true;
+
+                // New behavior: for AI sender, request server-side synthesis of the full transcript
+                // and use the returned audio bytes as the source for the audio element (keeps existing controls/UI).
+                audio.controls = true;
+                if (sender === 'ai' && transcript) {
+                    // Best-effort TTS: request synthesized audio and set as source
+                    fetch('/synthesize', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: transcript, format: 'mp3' })
+                    }).then(res => {
+                        if (!res.ok) throw new Error('Synthesis failed');
+                        return res.arrayBuffer();
+                    }).then(ab => {
+                        const blob = new Blob([ab], { type: 'audio/mpeg' });
+                        const url = URL.createObjectURL(blob);
+                        audio.src = url;
+                        audio.load();
+                    }).catch(err => {
+                        console.error('Synthesis failed, falling back to original source', err);
+                        // fallback to the original uploaded audio
+                        audio.src = audioUrl.startsWith('/uploads/') ? audioUrl : `/uploads/${audioUrl}`;
+                        audio.load();
+                    });
                 } else {
                     audio.src = audioUrl.startsWith('/uploads/') ? audioUrl : `/uploads/${audioUrl}`;
-                }       
-                
-                audio.controls = true;
+                }
 
                 let speedIndex = 0;
                 const speeds = [1, 1.5, 2];
