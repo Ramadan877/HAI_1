@@ -9,6 +9,86 @@
     let isSaving = false;
     let pendingRecordingBlob = null;
     let hasPendingRecording = false;
+    let pendingRecordingId = null;
+
+    // --- IndexedDB helpers for V1 ---
+    function openDBV1() {
+        return new Promise((resolve, reject) => {
+            try {
+                const req = indexedDB.open('HAI_Recordings', 1);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('recordings')) db.createObjectStore('recordings', { keyPath: 'id', autoIncrement: true });
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error || new Error('IndexedDB open error'));
+            } catch (err) { reject(err); }
+        });
+    }
+
+    function saveRecordingToDBV1(blob, meta) {
+        return openDBV1().then(db => new Promise((resolve, reject) => {
+            try {
+                const tx = db.transaction('recordings', 'readwrite');
+                const store = tx.objectStore('recordings');
+                const rec = { blob: blob, meta: meta || {}, created: Date.now() };
+                const req = store.add(rec);
+                req.onsuccess = () => { const id = req.result; db.close(); resolve(id); };
+                req.onerror = () => { db.close(); reject(req.error || new Error('add failed')); };
+            } catch (err) { reject(err); }
+        }));
+    }
+
+    function getAllRecordingsFromDBV1() {
+        return openDBV1().then(db => new Promise((resolve, reject) => {
+            try {
+                const tx = db.transaction('recordings', 'readonly');
+                const store = tx.objectStore('recordings');
+                const req = store.getAll();
+                req.onsuccess = () => { db.close(); resolve(req.result || []); };
+                req.onerror = () => { db.close(); reject(req.error || new Error('getAll failed')); };
+            } catch (err) { reject(err); }
+        }));
+    }
+
+    function deleteRecordingFromDBV1(id) {
+        return openDBV1().then(db => new Promise((resolve, reject) => {
+            try {
+                const tx = db.transaction('recordings', 'readwrite');
+                const store = tx.objectStore('recordings');
+                const req = store.delete(id);
+                req.onsuccess = () => { db.close(); resolve(true); };
+                req.onerror = () => { db.close(); reject(req.error || new Error('delete failed')); };
+            } catch (err) { reject(err); }
+        }));
+    }
+
+    async function processPendingRecordingsV1() {
+        try {
+            const rows = await getAllRecordingsFromDBV1();
+            if (!rows || rows.length === 0) return;
+            console.log('V1: processPendingRecordings found', rows.length, 'items');
+            for (const r of rows) {
+                try {
+                    const form = new FormData();
+                    const filename = r.meta && r.meta.filename ? r.meta.filename : `session_recording_${new Date(r.created).toISOString().replace(/[:.]/g,'')}.webm`;
+                    form.append('screen_recording', r.blob, filename);
+                    form.append('trial_type', r.meta && r.meta.trial_type ? r.meta.trial_type : (window.currentTrialType || 'unknown'));
+                    form.append('participant_id', r.meta && r.meta.participant_id ? r.meta.participant_id : (window.participantId || 'unknown'));
+                    const renderExportUrl = 'https://hai-v1-app.onrender.com/export_complete_data';
+                    const resp = await fetch(renderExportUrl, { method: 'POST', body: form });
+                    if (resp && resp.ok) {
+                        console.log('V1: uploaded pending recording id=', r.id);
+                        await deleteRecordingFromDBV1(r.id);
+                    } else {
+                        console.warn('V1: server rejected pending recording id=', r.id, resp && resp.status);
+                    }
+                } catch (err) {
+                    console.warn('V1: failed to upload pending recording id=', r.id, err);
+                }
+            }
+        } catch (err) { console.error('V1: processPendingRecordings error', err); }
+    }
 
     function checkRecordingStatus() {
         if (mediaRecorder) {
@@ -62,6 +142,10 @@
                     pendingRecordingBlob = blob;
                     hasPendingRecording = true;
                     console.log('V1: pending recording assembled (no upload yet), bytes=', blob.size);
+                    try {
+                        const meta = { filename: `session_recording_${new Date().toISOString().replace(/[:.]/g,'')}.webm`, trial_type: window.currentTrialType || 'unknown', participant_id: window.participantId || 'unknown' };
+                        saveRecordingToDBV1(blob, meta).then(id => { pendingRecordingId = id; console.log('V1: saved pending recording to DB id=', id); }).catch(dbErr => { console.warn('V1: failed to save pending recording to DB', dbErr); });
+                    } catch (dbEx) { console.warn('V1: IndexedDB save error', dbEx); }
                 } catch (err) {
                     console.error('V1: failed to assemble pending blob', err);
                     pendingRecordingBlob = null;
@@ -124,6 +208,7 @@
             if (recordingTimer) { clearInterval(recordingTimer); recordingTimer=null; }
             mediaRecorder = null; isRecording=false; recordingStartTime=null; recordedChunks=[];
         } catch (error) { console.error('V1 Error during cleanup:', error); }
+        try { processPendingRecordingsV1().catch(()=>{}); } catch(_){}
     }
 
     async function uploadPendingRecordingV1() {
@@ -200,3 +285,6 @@
     }
 
 })();
+
+// On load, attempt to process any pending recordings saved to IndexedDB
+try { if (typeof window !== 'undefined') { window.addEventListener('load', () => { try { processPendingRecordingsV1().catch(()=>{}); } catch(_){} }); } } catch(_){}
