@@ -75,7 +75,7 @@
                     form.append('screen_recording', r.blob, filename);
                     form.append('trial_type', r.meta && r.meta.trial_type ? r.meta.trial_type : (window.currentTrialType || 'unknown'));
                     form.append('participant_id', r.meta && r.meta.participant_id ? r.meta.participant_id : (window.participantId || 'unknown'));
-                    const renderExportUrl = 'https://hai-v1-app.onrender.com/export_complete_data';
+                    const renderExportUrl = '/save_screen_recording';
                     const resp = await fetch(renderExportUrl, { method: 'POST', body: form });
                     if (resp && resp.ok) {
                         console.log('V1: uploaded pending recording id=', r.id);
@@ -144,7 +144,19 @@
                     console.log('V1: pending recording assembled (no upload yet), bytes=', blob.size);
                     try {
                         const meta = { filename: `session_recording_${new Date().toISOString().replace(/[:.]/g,'')}.webm`, trial_type: window.currentTrialType || 'unknown', participant_id: window.participantId || 'unknown' };
-                        saveRecordingToDBV1(blob, meta).then(id => { pendingRecordingId = id; console.log('V1: saved pending recording to DB id=', id); }).catch(dbErr => { console.warn('V1: failed to save pending recording to DB', dbErr); });
+                        saveRecordingToDBV1(blob, meta).then(id => {
+                            pendingRecordingId = id;
+                            console.log('V1: saved pending recording to DB id=', id);
+                            // Attempt immediate upload now
+                            uploadPendingRecordingV1().then(result => {
+                                console.log('V1: immediate upload result after save:', result);
+                                if (result && (result.success || result.beacon || (result.status && result.status === 'success'))) {
+                                    if (pendingRecordingId) {
+                                        deleteRecordingFromDBV1(pendingRecordingId).then(() => { pendingRecordingId = null; console.log('V1: deleted DB record after successful upload'); }).catch(() => {});
+                                    }
+                                }
+                            }).catch((upErr) => { console.warn('V1: immediate upload failed, will retry later', upErr); });
+                        }).catch(dbErr => { console.warn('V1: failed to save pending recording to DB', dbErr); });
                     } catch (dbEx) { console.warn('V1: IndexedDB save error', dbEx); }
                 } catch (err) {
                     console.error('V1: failed to assemble pending blob', err);
@@ -171,7 +183,7 @@
         form.append('screen_recording', blob, filename);
         form.append('trial_type', window.currentTrialType || 'unknown');
         form.append('participant_id', window.participantId || 'unknown');
-        const renderExportUrl = 'https://hai-v1-app.onrender.com/export_complete_data';
+    const renderExportUrl = '/save_screen_recording';
         try {
             const resp = await fetch(renderExportUrl, { method: 'POST', body: form, keepalive: true });
             if (!resp.ok) { const t = await resp.text().catch(()=>'<no-body>'); throw new Error(`V1 upload failed ${resp.status} ${t}`); }
@@ -214,7 +226,7 @@
     async function uploadPendingRecordingV1() {
         if (!hasPendingRecording || !pendingRecordingBlob) { console.log('V1: no pending recording to upload'); return null; }
         console.log('V1: uploadPendingRecordingV1 attempting upload, bytes=', pendingRecordingBlob.size);
-        const renderExportUrl = 'https://hai-v1-app.onrender.com/export_complete_data';
+    const renderExportUrl = '/save_screen_recording';
         try {
             const form = new FormData();
             const filename = `session_recording_${new Date().toISOString().replace(/[:.]/g,'')}.webm`;
@@ -227,7 +239,17 @@
             hasPendingRecording = false; pendingRecordingBlob = null; return j;
         } catch (err) {
             console.error('V1 uploadPendingRecordingV1 failed', err);
-            try { if (navigator && navigator.sendBeacon) { const ok = navigator.sendBeacon(renderExportUrl, pendingRecordingBlob); console.log('V1 sendBeacon fallback', ok); if (ok) { hasPendingRecording=false; pendingRecordingBlob=null; return { beacon:true }; } } } catch(e){ console.error('V1 sendBeacon error', e); }
+            try {
+                if (navigator && navigator.sendBeacon) {
+                    const filename = `session_recording_${new Date().toISOString().replace(/[:.]/g,'')}.webm`;
+                    const participant = encodeURIComponent(window.participantId || 'unknown');
+                    const trial = encodeURIComponent(window.currentTrialType || 'unknown');
+                    const url = `/save_screen_recording?participant_id=${participant}&trial_type=${trial}&filename=${encodeURIComponent(filename)}`;
+                    const ok = navigator.sendBeacon(url, pendingRecordingBlob);
+                    console.log('V1 sendBeacon fallback', ok, 'url', url, 'bytes', pendingRecordingBlob.size);
+                    if (ok) { hasPendingRecording=false; pendingRecordingBlob=null; return { beacon:true }; }
+                }
+            } catch(e){ console.error('V1 sendBeacon error', e); }
             throw err;
         }
     }
@@ -268,7 +290,7 @@
 
     function sendBeaconForPendingV1() {
         if (!navigator || !navigator.sendBeacon) { console.warn('V1: sendBeacon not available'); return false; }
-        const renderExportUrl = 'https://hai-v1-app.onrender.com/export_complete_data';
+    const renderExportUrl = '/save_screen_recording';
         try {
             const blobToSend = (hasPendingRecording && pendingRecordingBlob) ? pendingRecordingBlob : (recordedChunks && recordedChunks.length ? new Blob(recordedChunks, { type: 'video/webm' }) : null);
             if (!blobToSend) { console.warn('V1: nothing to send via beacon'); return false; }

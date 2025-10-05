@@ -385,13 +385,28 @@ def save_screen_recording():
         app.logger.info(f"Received screen recording request. Files: {list(request.files.keys())}")
         app.logger.info(f"Form data: {list(request.form.keys())}")
 
-        if 'screen_recording' not in request.files:
+        # Support multipart/form-data and raw POST body (sendBeacon)
+        screen_recording = None
+        trial_type = None
+        participant_id = None
+
+        if 'screen_recording' in request.files:
+            screen_recording = request.files['screen_recording']
+            trial_type = request.form.get('trial_type')
+            participant_id = request.form.get('participant_id')
+        else:
+            raw = request.get_data()
+            if raw and len(raw) > 0:
+                from io import BytesIO
+                filename_q = request.args.get('filename') or f"session_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.webm"
+                participant_id = request.args.get('participant_id')
+                trial_type = request.args.get('trial_type')
+                screen_recording = BytesIO(raw)
+                screen_recording.filename = filename_q
+
+        if not screen_recording:
             app.logger.error('No screen recording file provided')
             return jsonify({'error': 'No screen recording file provided'}), 400
-            
-        screen_recording = request.files['screen_recording']
-        trial_type = request.form.get('trial_type')
-        participant_id = request.form.get('participant_id')
         
         app.logger.info(f'Received screen recording request - Participant: {participant_id}, Trial: {trial_type}')
         
@@ -405,13 +420,13 @@ def save_screen_recording():
         os.makedirs(screen_recordings_dir, exist_ok=True)
         
         # Use original filename if provided, otherwise generate timestamp-based name
-        original_filename = screen_recording.filename or 'screen_recording.webm'
+        original_filename = getattr(screen_recording, 'filename', None) or 'screen_recording.webm'
         if original_filename.startswith('screen_recording_') and original_filename.endswith('.webm'):
             filename = original_filename  # Use the timestamped filename from client
         else:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'screen_recording_{timestamp}.webm'
-            
+            filename = f'session_recording_{timestamp}.webm'
+
         filepath = os.path.join(screen_recordings_dir, filename)
         # Avoid overwriting if chunk already exists
         if os.path.exists(filepath):
@@ -426,7 +441,13 @@ def save_screen_recording():
         
         # Save file with better handling for large files
         try:
-            screen_recording.save(filepath)
+            # If BytesIO-like (sendBeacon), write bytes directly
+            if hasattr(screen_recording, 'read') and not hasattr(screen_recording, 'save'):
+                with open(filepath, 'wb') as out_f:
+                    screen_recording.seek(0)
+                    out_f.write(screen_recording.read())
+            else:
+                screen_recording.save(filepath)
             
             # Verify file was saved properly
             if os.path.exists(filepath):
