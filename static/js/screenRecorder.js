@@ -11,7 +11,6 @@
     let hasPendingRecording = false;
     let pendingRecordingId = null;
 
-    // --- IndexedDB helpers for V1 ---
     function openDBV1() {
         return new Promise((resolve, reject) => {
             try {

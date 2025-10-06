@@ -65,7 +65,6 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 app.secret_key = os.environ.get('SECRET_KEY', 'fallback-secret-key')
 
-# Configuration for handling large screen recordings (up to 500MB)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB limit for long recordings
 
 db.init_app(app)
@@ -94,6 +93,11 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
                         file_size, concept_name=None, attempt_number=None):
     """Save recording metadata to database."""
     try:
+        # Defensive: skip DB write when no DATABASE_URL is configured
+        if not db or not os.environ.get('DATABASE_URL'):
+            print('Database not configured, skipping recording save')
+            return None
+
         recording = Recording(
             session_id=session_id,
             recording_type=recording_type,
@@ -108,12 +112,20 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
         return recording.id
     except Exception as e:
         print(f"Error saving recording: {str(e)}")
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except:
+            pass
         return None
 
 def create_session_record(participant_id, trial_type, version):
     """Create a new session record."""
     try:
+        # Defensive: skip DB session creation when no DATABASE_URL is configured
+        if not db or not os.environ.get('DATABASE_URL'):
+            print('Database not configured, skipping session creation')
+            return None
+
         participant = Participant.query.filter_by(participant_id=participant_id).first()
         if not participant:
             participant = Participant(participant_id=participant_id)
@@ -131,7 +143,10 @@ def create_session_record(participant_id, trial_type, version):
         return session_id
     except Exception as e:
         print(f"Error creating session: {str(e)}")
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except:
+            pass
         return None
 
 def save_audio_with_cloud_backup(audio_data, filename, session_id, recording_type, concept_name=None, attempt_number=None):
@@ -358,7 +373,6 @@ def get_audio_filename(prefix, participant_id, interaction_number, extension='.m
 def generate_audio(text, file_path):
     """Generate speech (audio) from the provided text using gTTS with proper file handling."""
     try:
-        # Try OpenAI TTS first (if configured)
         try:
             audio_bytes, content_type = synthesize_with_openai(ssml_wrap(text), voice='alloy', fmt='mp3')
             if audio_bytes:
@@ -370,7 +384,6 @@ def generate_audio(text, file_path):
         except Exception as openai_err:
             print(f"V1: OpenAI TTS unavailable or failed: {openai_err}. Falling back to gTTS.")
 
-        # Fallback to gTTS (existing behavior)
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
             temp_path = temp_file.name
 
@@ -459,12 +472,42 @@ def save_screen_recording():
                 if file_size > 0:
                     size_mb = round(file_size / (1024 * 1024), 2)
                     app.logger.info(f'Screen recording saved successfully: {filepath} ({size_mb}MB)')
-                    
+                    # Attempt to record metadata in the database (if configured)
+                    try:
+                        db_url = os.environ.get('DATABASE_URL')
+                        recording_id = None
+                        if db_url:
+                            # Ensure we have a session_id for this participant/trial
+                            sess_id = session.get('session_id')
+                            if not sess_id:
+                                try:
+                                    sess_id = create_session_record(participant_id, trial_type, 'V1')
+                                    if sess_id:
+                                        session['session_id'] = sess_id
+                                except Exception as e:
+                                    app.logger.warning(f'Could not create DB session for participant {participant_id}: {e}')
+
+                            if sess_id:
+                                # Store relative path in DB for portability
+                                try:
+                                    rel_path = os.path.relpath(filepath, app.config.get('UPLOAD_FOLDER', 'uploads'))
+                                except Exception:
+                                    rel_path = filepath
+                                try:
+                                    recording_id = save_recording_to_db(sess_id, 'screen_recording', rel_path, original_filename, file_size)
+                                    app.logger.info(f'Recording metadata saved to DB id={recording_id}')
+                                except Exception as e:
+                                    app.logger.error(f'Failed to save recording metadata to DB: {e}')
+
+                    except Exception as db_exc:
+                        app.logger.warning(f'Database save skipped or failed: {db_exc}')
+
                     return jsonify({
                         'success': True,
                         'message': 'Screen recording uploaded successfully',
                         'filename': filename,
-                        'size_mb': size_mb
+                        'size_mb': size_mb,
+                        'recording_id': recording_id
                     }), 200
                 else:
                     app.logger.error('Screen recording file is empty')
