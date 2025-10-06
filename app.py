@@ -405,7 +405,12 @@ def generate_audio(text, file_path):
 @app.route('/save_screen_recording', methods=['POST'])
 def save_screen_recording():
     try:
-        app.logger.info(f"Received screen recording request. Files: {list(request.files.keys())}")
+        app.logger.info(f"Received screen recording request. Remote: {request.remote_addr}, Method: {request.method}")
+        try:
+            app.logger.info(f"Headers: {{'Content-Length': request.headers.get('Content-Length'), 'User-Agent': request.headers.get('User-Agent')}}")
+        except Exception:
+            pass
+        app.logger.info(f"Files: {list(request.files.keys())}")
         app.logger.info(f"Form data: {list(request.form.keys())}")
 
         screen_recording = None
@@ -523,6 +528,41 @@ def save_screen_recording():
     except Exception as e:
         app.logger.error(f"Error saving screen recording: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/list_recent_recordings')
+def list_recent_recordings():
+    """Return latest N recordings from DB with file existence checks."""
+    try:
+        n = int(request.args.get('n', 20))
+        recs = Recording.query.order_by(Recording.created_at.desc()).limit(n).all()
+        out = []
+        base = app.config.get('UPLOAD_FOLDER', 'uploads')
+        for r in recs:
+            fp = r.file_path or ''
+            # Resolve relative paths saved against UPLOAD_FOLDER
+            if fp and not os.path.isabs(fp):
+                full = os.path.normpath(os.path.join(base, fp))
+            else:
+                full = fp
+            exists = os.path.exists(full) if full else False
+            size = os.path.getsize(full) if exists else None
+            session_rec = Session.query.filter_by(session_id=r.session_id).first()
+            participant_id = session_rec.participant_id if session_rec else None
+            out.append({
+                'id': r.id,
+                'session_id': r.session_id,
+                'participant_id': participant_id,
+                'recording_type': r.recording_type,
+                'file_path_db': r.file_path,
+                'file_path_resolved': full,
+                'exists': exists,
+                'size': size,
+                'created_at': r.created_at
+            })
+        return jsonify({'status': 'ok', 'recent_recordings': out})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/health')
 def health_check():
