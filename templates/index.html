@@ -6,7 +6,6 @@
     <title>Interactive Chat with AI</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
-    <script src="{{ url_for('static', filename='js/screenRecorder.js') }}"></script>
 </head> 
 <body>
     <div class="start-overlay" id="start-overlay">
@@ -857,12 +856,10 @@
                         timestamp: new Date().toISOString()
                     });
                     
-                    // Check if we're on HTTPS or localhost
                     if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
                         console.warn('Not on HTTPS - some features may not work');
                     }
 
-                    // Check if getUserMedia is supported
                     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                         throw new Error('getUserMedia not supported in this browser');
                     }
@@ -883,7 +880,6 @@
                         timestamp: new Date().toISOString()
                     });
                     
-                    // Create AudioContext with user interaction
                     if (!window.audioContext) {
                         try {
                             window.audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -893,7 +889,6 @@
                         }
                     }
                     
-                    // Resume AudioContext if suspended (required on deployed sites)
                     if (window.audioContext && window.audioContext.state === 'suspended') {
                         try {
                             await window.audioContext.resume();
@@ -905,7 +900,6 @@
                     
                     audioContext = window.audioContext;
                     
-                    // Only create analyser if AudioContext is working
                     if (audioContext && audioContext.state === 'running') {
                         try {
                             analyser = audioContext.createAnalyser();
@@ -917,21 +911,20 @@
                             console.log('Audio visualization setup completed');
                         } catch (e) {
                             console.warn('Audio visualization setup failed:', e);
-                            analyser = null; // Disable visualization
+                            analyser = null; 
                         }
                     } else {
                         console.warn('AudioContext not running, disabling visualization');
                         analyser = null;
                     }
 
-                    // Set up MediaRecorder with fallback MIME types
                     let mimeType = 'audio/webm;codecs=opus';
                     if (!MediaRecorder.isTypeSupported(mimeType)) {
                         mimeType = 'audio/webm';
                         if (!MediaRecorder.isTypeSupported(mimeType)) {
                             mimeType = 'audio/mp4';
                             if (!MediaRecorder.isTypeSupported(mimeType)) {
-                                mimeType = ''; // Let browser choose
+                                mimeType = ''; 
                             }
                         }
                     }
@@ -1030,7 +1023,6 @@
                     }
 
                     if (analyser && dataArray) {
-                        // Real audio visualization
                         analyser.getByteFrequencyData(dataArray);
                         
                         let sum = 0;
@@ -1045,8 +1037,7 @@
                         
                         addWaveformBar(finalVolume);
                     } else {
-                        // Fallback: Simulated visualization when analyser is not available
-                        const baseVolume = 80 + Math.random() * 60; // Random between 80-140
+                        const baseVolume = 80 + Math.random() * 60; 
                         const variation = (Math.sin(Date.now() / 200) * 30) + (Math.random() - 0.5) * 40;
                         const simulatedVolume = Math.max(40, Math.min(200, baseVolume + variation));
                         
@@ -1205,7 +1196,6 @@
                     }
 
                     if (analyser && dataArray) {
-                        // Real audio visualization
                         analyser.getByteFrequencyData(dataArray);
                         
                         let sum = 0;
@@ -1220,8 +1210,7 @@
                         
                         addWaveformBar(finalVolume);
                     } else {
-                        // Fallback: Simulated visualization when analyser is not available
-                        const baseVolume = 80 + Math.random() * 60; // Random between 80-140
+                        const baseVolume = 80 + Math.random() * 60; 
                         const variation = (Math.sin(Date.now() / 200) * 30) + (Math.random() - 0.5) * 40;
                         const simulatedVolume = Math.max(40, Math.min(200, baseVolume + variation));
                         
@@ -1614,18 +1603,7 @@
                 const audio = document.createElement('audio');
                 audio.preload = 'metadata';
 
-                // Original behavior: set the audio.src directly to the server file or blob.
-                // audio.src = audioUrl;
-                // audio.load();
-                // if (audioUrl.startsWith('blob:')) {
-                //     audio.src = audioUrl;
-                // } else {
-                //     audio.src = audioUrl.startsWith('/uploads/') ? audioUrl : `/uploads/${audioUrl}`;
-                // }
-                // audio.controls = true;
 
-                // New behavior: for AI sender, request server-side synthesis of the full transcript
-                // and use the returned audio bytes as the source for the audio element (keeps existing controls/UI).
                 audio.controls = true;
                 if (sender === 'ai' && transcript) {
                     // Best-effort TTS: request synthesized audio and set as source
@@ -1643,7 +1621,6 @@
                         audio.load();
                     }).catch(err => {
                         console.error('Synthesis failed, falling back to original source', err);
-                        // fallback to the original uploaded audio
                         audio.src = audioUrl.startsWith('/uploads/') ? audioUrl : `/uploads/${audioUrl}`;
                         audio.load();
                     });

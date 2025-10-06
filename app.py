@@ -402,132 +402,7 @@ def generate_audio(text, file_path):
         print(f"V1: Error generating audio: {str(e)}")
         return False
 
-@app.route('/save_screen_recording', methods=['POST'])
-def save_screen_recording():
-    try:
-        app.logger.info(f"Received screen recording request. Remote: {request.remote_addr}, Method: {request.method}")
-        try:
-            app.logger.info(f"Headers: {{'Content-Length': request.headers.get('Content-Length'), 'User-Agent': request.headers.get('User-Agent')}}")
-        except Exception:
-            pass
-        app.logger.info(f"Files: {list(request.files.keys())}")
-        app.logger.info(f"Form data: {list(request.form.keys())}")
-
-        screen_recording = None
-        trial_type = None
-        participant_id = None
-
-        if 'screen_recording' in request.files:
-            screen_recording = request.files['screen_recording']
-            trial_type = request.form.get('trial_type')
-            participant_id = request.form.get('participant_id')
-        else:
-            raw = request.get_data()
-            if raw and len(raw) > 0:
-                from io import BytesIO
-                filename_q = request.args.get('filename') or f"session_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.webm"
-                participant_id = request.args.get('participant_id')
-                trial_type = request.args.get('trial_type')
-                screen_recording = BytesIO(raw)
-                screen_recording.filename = filename_q
-
-        if not screen_recording:
-            app.logger.error('No screen recording file provided')
-            return jsonify({'error': 'No screen recording file provided'}), 400
-        
-        app.logger.info(f'Received screen recording request - Participant: {participant_id}, Trial: {trial_type}')
-        
-        if not all([screen_recording, trial_type, participant_id]):
-            app.logger.error('Missing required parameters')
-            return jsonify({'error': 'Missing required parameters'}), 400
-            
-        folders = get_participant_folder(participant_id, trial_type)
-        
-        screen_recordings_dir = folders['screen_recordings_folder']
-        os.makedirs(screen_recordings_dir, exist_ok=True)
-        
-        original_filename = getattr(screen_recording, 'filename', None) or 'screen_recording.webm'
-        if original_filename.startswith('screen_recording_') and original_filename.endswith('.webm'):
-            filename = original_filename  
-        else:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'session_recording_{timestamp}.webm'
-
-        filepath = os.path.join(screen_recordings_dir, filename)
-        if os.path.exists(filepath):
-            base, ext = os.path.splitext(filename)
-            counter = 1
-            while os.path.exists(os.path.join(screen_recordings_dir, f"{base}_{counter}{ext}")):
-                counter += 1
-            filename = f"{base}_{counter}{ext}"
-            filepath = os.path.join(screen_recordings_dir, filename)
-        
-        app.logger.info(f'Saving screen recording to: {filepath}')
-        
-        try:
-            if hasattr(screen_recording, 'read') and not hasattr(screen_recording, 'save'):
-                with open(filepath, 'wb') as out_f:
-                    screen_recording.seek(0)
-                    out_f.write(screen_recording.read())
-            else:
-                screen_recording.save(filepath)
-            
-            if os.path.exists(filepath):
-                file_size = os.path.getsize(filepath)
-                if file_size > 0:
-                    size_mb = round(file_size / (1024 * 1024), 2)
-                    app.logger.info(f'Screen recording saved successfully: {filepath} ({size_mb}MB)')
-                    # Attempt to record metadata in the database (if configured)
-                    try:
-                        db_url = os.environ.get('DATABASE_URL')
-                        recording_id = None
-                        if db_url:
-                            # Ensure we have a session_id for this participant/trial
-                            sess_id = session.get('session_id')
-                            if not sess_id:
-                                try:
-                                    sess_id = create_session_record(participant_id, trial_type, 'V1')
-                                    if sess_id:
-                                        session['session_id'] = sess_id
-                                except Exception as e:
-                                    app.logger.warning(f'Could not create DB session for participant {participant_id}: {e}')
-
-                            if sess_id:
-                                # Store relative path in DB for portability
-                                try:
-                                    rel_path = os.path.relpath(filepath, app.config.get('UPLOAD_FOLDER', 'uploads'))
-                                except Exception:
-                                    rel_path = filepath
-                                try:
-                                    recording_id = save_recording_to_db(sess_id, 'screen_recording', rel_path, original_filename, file_size)
-                                    app.logger.info(f'Recording metadata saved to DB id={recording_id}')
-                                except Exception as e:
-                                    app.logger.error(f'Failed to save recording metadata to DB: {e}')
-
-                    except Exception as db_exc:
-                        app.logger.warning(f'Database save skipped or failed: {db_exc}')
-
-                    return jsonify({
-                        'success': True,
-                        'message': 'Screen recording uploaded successfully',
-                        'filename': filename,
-                        'size_mb': size_mb,
-                        'recording_id': recording_id
-                    }), 200
-                else:
-                    app.logger.error('Screen recording file is empty')
-                    return jsonify({'error': 'Screen recording file is empty'}), 500
-            else:
-                app.logger.error('Screen recording file was not created')
-                return jsonify({'error': 'Failed to save screen recording file'}), 500
-                
-        except Exception as save_error:
-            app.logger.error(f'Error saving file: {str(save_error)}')
-            return jsonify({'error': f'Error saving file: {str(save_error)}'}), 500
-        
-    except Exception as e:
-        app.logger.error(f"Error saving screen recording: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+# Screen recording functionality removed per request. The save_screen_recording endpoint was deleted.
 
 
 @app.route('/list_recent_recordings')
@@ -540,7 +415,6 @@ def list_recent_recordings():
         base = app.config.get('UPLOAD_FOLDER', 'uploads')
         for r in recs:
             fp = r.file_path or ''
-            # Resolve relative paths saved against UPLOAD_FOLDER
             if fp and not os.path.isabs(fp):
                 full = os.path.normpath(os.path.join(base, fp))
             else:
@@ -1433,14 +1307,8 @@ def export_complete_data():
             app.config.get('CONCEPT_AUDIO_FOLDER'),
         ]
 
+        # Screen recordings were removed; only include user audio and concept audio
         user_audio_base = app.config.get('USER_AUDIO_FOLDER', '')
-        if user_audio_base and os.path.exists(user_audio_base):
-            for participant_id in os.listdir(user_audio_base):
-                participant_path = os.path.join(user_audio_base, participant_id)
-                if os.path.isdir(participant_path):
-                    screen_recordings_folder = os.path.join(participant_path, 'Screen Recordings')
-                    if os.path.exists(screen_recordings_folder):
-                        folders_to_export.append(screen_recordings_folder)
 
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             for folder in folders_to_export:
