@@ -181,8 +181,6 @@
             visualizerCtx = visualizerCanvas.getContext('2d');
             updateInputBarState('idle');
 
-            // Feature toggle: enable streaming client-side without changing default behavior
-            // Set to true for streaming incremental tokens; default is false to preserve existing behavior
             window.USE_STREAMING = false;
 
             function updateInputBarState(state) {
@@ -533,7 +531,7 @@
             canvas.height = 40;
             const canvasCtx = canvas.getContext('2d');
             let audioContext, analyser, dataArray, animationId;
-            let recognition = null; // Web Speech API recognition instance for live transcription
+            let recognition = null; 
 
             const introAudioUrl = '/uploads/ai_audio/intro_message.mp3';
 
@@ -1057,7 +1055,6 @@
                     sum += v * v;
                 }
                 const rms = Math.sqrt(sum / buffer.length);
-                // scale to 0..255 for compatibility with existing code
                 return Math.min(255, Math.max(0, Math.floor(rms * 255 * 2)));
             }
 
@@ -1081,10 +1078,6 @@
                 recognition.interimResults = true;
                 recognition.continuous = true;
 
-                // NOTE: Global live-transcript (top-of-chat) removed.
-                // We no longer create a global 'live-transcript' element here.
-                // Real-time transcription will be displayed inside the AI message bubble
-                // and synchronized with AI audio playback instead.
 
                 let lastInterim = '';
                 recognition.onresult = (event) => {
@@ -1098,13 +1091,7 @@
                         }
                     }
 
-                    // update UI smoothly
-                    // We no longer update a global live transcript here. Keep interim handling
-                    // suppressed to avoid top-of-chat UI. If needed, interim results can be
-                    // forwarded to the AI-bubble transcript when audio playback occurs.
-                    // For now, we simply ignore interim updates to avoid UI jank.
                     if (finalTranscript && finalTranscript.trim().length > 0) {
-                        // Optionally store final transcript somewhere for later use
                         recognition._lastFinal = (recognition._lastFinal || '') + finalTranscript.trim() + ' ';
                         lastInterim = '';
                     }
@@ -1441,7 +1428,6 @@
                     
                     console.log("Sending data to server with concept:", currentConcept);
                     
-                    // If streaming toggle enabled, call streaming helper
                     if (window.USE_STREAMING) {
                         return await submitMessageStream(formData, currentParticipantId);
                     }
@@ -1500,7 +1486,6 @@
                 }
             }
 
-            // Streaming helper (non-invasive): consumes text stream and handles final metadata
             async function submitMessageStream(formData, currentParticipantId) {
                 const streamResponse = await fetch('/stream_submit_message', {
                     method: 'POST',
@@ -1789,40 +1774,47 @@
                     audio.src = audioUrl.startsWith('/uploads/') ? audioUrl : `/uploads/${audioUrl}`;
                 }
 
-                // Disable play button until audio is actually playable to avoid
-                // showing the pause icon when audio isn't yet ready.
                 playButton.style.pointerEvents = 'none';
                 playButton.style.opacity = '0.6';
                 playButton.title = 'Loading audio...';
 
-                // For user messages we want the play button enabled only when both
-                // the audio is playable AND the transcript is available (not 'processing...').
+
                 let audioPlayable = false;
                 let transcriptReady = !(sender === 'user' && transcript === 'processing...');
 
                 function updatePlayability() {
-                    if (audioPlayable && transcriptReady) {
-                        playButton.style.pointerEvents = 'auto';
-                        playButton.style.opacity = '1';
-                        playButton.title = 'Play audio';
+                    if (sender === 'user') {
+                        if (transcriptReady || audioPlayable) {
+                            playButton.style.pointerEvents = 'auto';
+                            playButton.style.opacity = '1';
+                            playButton.title = 'Play audio';
+                        } else {
+                            playButton.style.pointerEvents = 'none';
+                            playButton.style.opacity = '0.6';
+                            playButton.title = 'Loading audio...';
+                        }
                     } else {
-                        playButton.style.pointerEvents = 'none';
-                        playButton.style.opacity = '0.6';
-                        playButton.title = 'Loading audio...';
+                        if (audioPlayable) {
+                            playButton.style.pointerEvents = 'auto';
+                            playButton.style.opacity = '1';
+                            playButton.title = 'Play audio';
+                        } else {
+                            playButton.style.pointerEvents = 'none';
+                            playButton.style.opacity = '0.6';
+                            playButton.title = 'Loading audio...';
+                        }
                     }
                 }
 
                 function markAudioPlayable() {
                     audioPlayable = true;
                     updatePlayability();
-                    // Stop the loading spinner and show duration if available
                     try {
                         if (isFinite(audio.duration) && audio.duration > 0) {
                             const mins = Math.floor(audio.duration / 60);
                             const secs = Math.floor(audio.duration % 60).toString().padStart(2, '0');
                             durationDisplay.textContent = `${mins}:${secs}`;
                         } else {
-                            // If duration not yet available, wait for loadedmetadata once
                             const setDurationOnce = () => {
                                 if (isFinite(audio.duration) && audio.duration > 0) {
                                     const mins = Math.floor(audio.duration / 60);
@@ -1845,10 +1837,7 @@
                 audio.addEventListener('canplaythrough', markAudioPlayable);
                 audio.addEventListener('loadedmetadata', markAudioPlayable);
 
-                // If transcript changes later (e.g., processing finishes), update transcriptReady
                 if (sender === 'user' && transcript === 'processing...') {
-                    // Poll for transcript element text update - the existing flow will replace
-                    // the transcript DIV content when ready. We'll observe the DOM for changes.
                     const observer = new MutationObserver((mutations) => {
                         const text = transcriptDiv.textContent || '';
                         if (text && text.trim() && text.trim() !== 'processing...') {
@@ -1860,7 +1849,6 @@
                     try {
                         observer.observe(transcriptDiv, { childList: true, subtree: true, characterData: true });
                     } catch (e) {
-                        // If observer fails, fallback to polling
                         const pollId = setInterval(() => {
                             const text = transcriptDiv.textContent || '';
                             if (text && text.trim() && text.trim() !== 'processing...') {
@@ -1871,14 +1859,12 @@
                         }, 500);
                     }
                 } else {
-                    // transcript already ready
                     transcriptReady = true;
                     updatePlayability();
                 }
 
                 let speedIndex = 0;
                 playButton.addEventListener('click', () => {
-                    // Ignore clicks until the audio is marked playable
                     if (playButton.style.pointerEvents === 'none') return;
 
                     if (audio.paused) {
@@ -1892,7 +1878,6 @@
 
                         stopAllAudio();
 
-                        // Attempt to play and only update UI once playback actually starts
                         const playPromise = audio.play();
                         const startPlaybackActions = () => {
                             playButton.innerHTML = '<i class="fas fa-pause"></i>';
@@ -1901,7 +1886,6 @@
 
                                 const transcriptDiv = messageDiv.querySelector('.transcript-text.transcript-unplayed');
                                 if (transcriptDiv) {
-                                    // Show the transcript container but keep content hidden for progressive reveal
                                     transcriptDiv.style.display = 'block';
                                     transcriptDiv.style.opacity = '1';
                                     transcriptDiv.classList.remove('transcript-unplayed');
@@ -1969,11 +1953,9 @@
                                 startPlaybackActions();
                             }).catch(err => {
                                 console.error('Audio play failed:', err);
-                                // leave button as play to indicate not playing
                                 playButton.innerHTML = '<i class="fas fa-play"></i>';
                             });
                         } else {
-                            // Synchronous play path
                             startPlaybackActions();
                         }
                     } else {

@@ -61,7 +61,6 @@ try:
     from flask_compress import Compress
     Compress(app)
 except Exception:
-    # optional dependency; continue without compression if unavailable
     pass
 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
@@ -100,7 +99,6 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
                         file_size, concept_name=None, attempt_number=None):
     """Save recording metadata to database."""
     try:
-        # Defensive: skip DB write when no DATABASE_URL is configured
         if not db or not os.environ.get('DATABASE_URL'):
             print('Database not configured, skipping recording save')
             return None
@@ -128,7 +126,6 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
 def create_session_record(participant_id, trial_type, version):
     """Create a new session record."""
     try:
-        # Defensive: skip DB session creation when no DATABASE_URL is configured
         if not db or not os.environ.get('DATABASE_URL'):
             print('Database not configured, skipping session creation')
             return None
@@ -408,9 +405,7 @@ def generate_audio(text, file_path):
     except Exception as e:
         print(f"V1: Error generating audio: {str(e)}")
         return False
-
-# Screen recording functionality removed per request. The save_screen_recording endpoint was deleted.
-
+    
 
 @app.route('/list_recent_recordings')
 def list_recent_recordings():
@@ -1451,7 +1446,6 @@ def export_complete_data():
             app.config.get('CONCEPT_AUDIO_FOLDER'),
         ]
 
-        # Screen recordings were removed; only include user audio and concept audio
         user_audio_base = app.config.get('USER_AUDIO_FOLDER', '')
 
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
