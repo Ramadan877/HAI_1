@@ -1795,20 +1795,86 @@
                 playButton.style.opacity = '0.6';
                 playButton.title = 'Loading audio...';
 
-                function markPlayable() {
-                    playButton.style.pointerEvents = 'auto';
-                    playButton.style.opacity = '1';
-                    playButton.title = 'Play audio';
+                // For user messages we want the play button enabled only when both
+                // the audio is playable AND the transcript is available (not 'processing...').
+                let audioPlayable = false;
+                let transcriptReady = !(sender === 'user' && transcript === 'processing...');
+
+                function updatePlayability() {
+                    if (audioPlayable && transcriptReady) {
+                        playButton.style.pointerEvents = 'auto';
+                        playButton.style.opacity = '1';
+                        playButton.title = 'Play audio';
+                    } else {
+                        playButton.style.pointerEvents = 'none';
+                        playButton.style.opacity = '0.6';
+                        playButton.title = 'Loading audio...';
+                    }
+                }
+
+                function markAudioPlayable() {
+                    audioPlayable = true;
+                    updatePlayability();
+                    // Stop the loading spinner and show duration if available
                     try {
-                        audio.removeEventListener('canplay', markPlayable);
-                        audio.removeEventListener('canplaythrough', markPlayable);
-                        audio.removeEventListener('loadedmetadata', markPlayable);
+                        if (isFinite(audio.duration) && audio.duration > 0) {
+                            const mins = Math.floor(audio.duration / 60);
+                            const secs = Math.floor(audio.duration % 60).toString().padStart(2, '0');
+                            durationDisplay.textContent = `${mins}:${secs}`;
+                        } else {
+                            // If duration not yet available, wait for loadedmetadata once
+                            const setDurationOnce = () => {
+                                if (isFinite(audio.duration) && audio.duration > 0) {
+                                    const mins = Math.floor(audio.duration / 60);
+                                    const secs = Math.floor(audio.duration % 60).toString().padStart(2, '0');
+                                    durationDisplay.textContent = `${mins}:${secs}`;
+                                }
+                                try { audio.removeEventListener('loadedmetadata', setDurationOnce); } catch (e) {}
+                            };
+                            audio.addEventListener('loadedmetadata', setDurationOnce);
+                        }
+                    } catch (e) { console.warn('Error setting duration display:', e); }
+                    try {
+                        audio.removeEventListener('canplay', markAudioPlayable);
+                        audio.removeEventListener('canplaythrough', markAudioPlayable);
+                        audio.removeEventListener('loadedmetadata', markAudioPlayable);
                     } catch (e) {}
                 }
 
-                audio.addEventListener('canplay', markPlayable);
-                audio.addEventListener('canplaythrough', markPlayable);
-                audio.addEventListener('loadedmetadata', markPlayable);
+                audio.addEventListener('canplay', markAudioPlayable);
+                audio.addEventListener('canplaythrough', markAudioPlayable);
+                audio.addEventListener('loadedmetadata', markAudioPlayable);
+
+                // If transcript changes later (e.g., processing finishes), update transcriptReady
+                if (sender === 'user' && transcript === 'processing...') {
+                    // Poll for transcript element text update - the existing flow will replace
+                    // the transcript DIV content when ready. We'll observe the DOM for changes.
+                    const observer = new MutationObserver((mutations) => {
+                        const text = transcriptDiv.textContent || '';
+                        if (text && text.trim() && text.trim() !== 'processing...') {
+                            transcriptReady = true;
+                            updatePlayability();
+                            try { observer.disconnect(); } catch (e) {}
+                        }
+                    });
+                    try {
+                        observer.observe(transcriptDiv, { childList: true, subtree: true, characterData: true });
+                    } catch (e) {
+                        // If observer fails, fallback to polling
+                        const pollId = setInterval(() => {
+                            const text = transcriptDiv.textContent || '';
+                            if (text && text.trim() && text.trim() !== 'processing...') {
+                                transcriptReady = true;
+                                updatePlayability();
+                                clearInterval(pollId);
+                            }
+                        }, 500);
+                    }
+                } else {
+                    // transcript already ready
+                    transcriptReady = true;
+                    updatePlayability();
+                }
 
                 let speedIndex = 0;
                 playButton.addEventListener('click', () => {
