@@ -181,6 +181,10 @@
             visualizerCtx = visualizerCanvas.getContext('2d');
             updateInputBarState('idle');
 
+            // Feature toggle: enable streaming client-side without changing default behavior
+            // Set to true for streaming incremental tokens; default is false to preserve existing behavior
+            window.USE_STREAMING = false;
+
             function updateInputBarState(state) {
                 const recordBtn = document.getElementById('record-btn');
                 const pauseBtn = document.getElementById('pause-btn');
@@ -1077,15 +1081,10 @@
                 recognition.interimResults = true;
                 recognition.continuous = true;
 
-                // Create or show live transcript container
-                let liveBox = document.getElementById('live-transcript');
-                if (!liveBox) {
-                    liveBox = document.createElement('div');
-                    liveBox.id = 'live-transcript';
-                    liveBox.className = 'live-transcript';
-                    const chatContainerEl = document.getElementById('chat-container');
-                    chatContainerEl.insertAdjacentElement('afterbegin', liveBox);
-                }
+                // NOTE: Global live-transcript (top-of-chat) removed.
+                // We no longer create a global 'live-transcript' element here.
+                // Real-time transcription will be displayed inside the AI message bubble
+                // and synchronized with AI audio playback instead.
 
                 let lastInterim = '';
                 recognition.onresult = (event) => {
@@ -1100,17 +1099,13 @@
                     }
 
                     // update UI smoothly
-                    if (interim && interim.trim().length > 0) {
-                        liveBox.innerHTML = `<div class="live-interim">${escapeHtml(interim)}</div>`;
-                    }
-
+                    // We no longer update a global live transcript here. Keep interim handling
+                    // suppressed to avoid top-of-chat UI. If needed, interim results can be
+                    // forwarded to the AI-bubble transcript when audio playback occurs.
+                    // For now, we simply ignore interim updates to avoid UI jank.
                     if (finalTranscript && finalTranscript.trim().length > 0) {
-                        const p = document.createElement('div');
-                        p.className = 'live-final slide-in';
-                        p.textContent = finalTranscript.trim();
-                        liveBox.appendChild(p);
-                        // keep scroll at bottom
-                        liveBox.scrollTop = liveBox.scrollHeight;
+                        // Optionally store final transcript somewhere for later use
+                        recognition._lastFinal = (recognition._lastFinal || '') + finalTranscript.trim() + ' ';
                         lastInterim = '';
                     }
                 };
@@ -1446,6 +1441,11 @@
                     
                     console.log("Sending data to server with concept:", currentConcept);
                     
+                    // If streaming toggle enabled, call streaming helper
+                    if (window.USE_STREAMING) {
+                        return await submitMessageStream(formData, currentParticipantId);
+                    }
+
                     const response = await fetch('/submit_message', {
                         method: 'POST',
                         body: formData
@@ -1498,6 +1498,82 @@
                     updateInputBarState('idle');
                     throw error;
                 }
+            }
+
+            // Streaming helper (non-invasive): consumes text stream and handles final metadata
+            async function submitMessageStream(formData, currentParticipantId) {
+                const streamResponse = await fetch('/stream_submit_message', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!streamResponse.ok) {
+                    const errBody = await streamResponse.json().catch(()=>null);
+                    throw new Error(errBody && errBody.message ? errBody.message : 'Stream request failed');
+                }
+
+                const chatContainer = document.getElementById('chat-container');
+                const aiBubble = document.createElement('div');
+                aiBubble.className = 'chat-message ai-message streaming';
+                aiBubble.textContent = '';
+                chatContainer.appendChild(aiBubble);
+
+                const reader = streamResponse.body.getReader();
+                const decoder = new TextDecoder();
+                let finalText = '';
+                let buffer = '';
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    buffer += chunk;
+
+                    const markerStart = buffer.indexOf('__JSON__START__');
+                    if (markerStart !== -1) {
+                        finalText += buffer.slice(0, markerStart);
+                        aiBubble.textContent = finalText;
+
+                        const start = markerStart + '__JSON__START__'.length;
+                        const endMarker = '__JSON__END__';
+                        const end = buffer.indexOf(endMarker, start);
+                        if (end !== -1) {
+                            const jsonText = buffer.slice(start, end);
+                            let meta = null;
+                            try { meta = JSON.parse(jsonText); } catch (e) { console.error('Invalid meta JSON', e); }
+
+                            if (meta) {
+                                attemptCount = meta.attempt_count || (attemptCount || 0);
+                                const userMessages = document.querySelectorAll('.user-message');
+                                const lastUserMessage = userMessages[userMessages.length - 1];
+                                if (lastUserMessage) {
+                                    const transcriptDiv = lastUserMessage.querySelector('.transcript-text');
+                                    if (transcriptDiv) transcriptDiv.textContent = meta.response || '';
+                                }
+
+                                const aiAudioUrl = `/uploads/User Data/${currentParticipantId}/${meta.ai_audio_url}`;
+                                displayAudioMessage(aiAudioUrl, 'ai', meta.response || finalText);
+
+                                document.getElementById('pause-btn').style.display = 'none';
+                                document.getElementById('delete-btn').style.display = 'none';
+                                document.getElementById('record-btn').style.display = 'flex';
+                                document.getElementById('record-btn').innerHTML = '<i class="fas fa-microphone"></i>';
+
+                                activateSiriOrb();
+                                updateInputBarState('idle');
+                            }
+
+                            buffer = buffer.slice(end + endMarker.length);
+                            break;
+                        }
+                    } else {
+                        finalText += chunk;
+                        aiBubble.textContent = finalText;
+                        if (buffer.length > 20000) buffer = buffer.slice(-10000);
+                    }
+                }
+
+                return { status: 'success', response: finalText };
             }
 
             async function getAudioDuration(audioBlob) {
@@ -1745,20 +1821,72 @@
                         playButton.innerHTML = '<i class="fas fa-pause"></i>';
                         if (sender === 'ai') {
                             siriOrb.style.boxShadow = "0 0 20px 5px rgba(0, 128, 255, 0.7)";
-
                             const transcriptDiv = messageDiv.querySelector('.transcript-text.transcript-unplayed');
                             if (transcriptDiv) {
-                                transcriptDiv.style.opacity = '0';
+                                // Show the transcript container but keep content hidden for progressive reveal
                                 transcriptDiv.style.display = 'block';
-                                
-                                setTimeout(() => {
-                                    transcriptDiv.style.opacity = '1';
-                                }, 10);
-                                
+                                transcriptDiv.style.opacity = '1';
                                 transcriptDiv.classList.remove('transcript-unplayed');
-                                
+
+                                // Progressive, playback-synced word-by-word reveal.
+                                // If the transcript is available, split into words and reveal them
+                                // proportionally over the audio duration. This is a simple fallback
+                                // when precise word timestamps are not available.
+                                const fullText = transcriptDiv.textContent || '';
+                                const words = fullText.trim().split(/\s+/).filter(Boolean);
+                                transcriptDiv.textContent = '';
+
+                                if (words.length === 0) {
+                                    transcriptDiv.textContent = fullText;
+                                } else {
+                                    // Create spans for each word so we can reveal them
+                                    transcriptDiv.innerHTML = words.map(w => `<span class=\"word\" style=\"opacity:0; transition: opacity 0.12s linear;\">${escapeHtml(w)}</span>`).join(' ');
+                                    const spans = Array.from(transcriptDiv.querySelectorAll('.word'));
+
+                                    // Remove any previously attached reveal handlers for this message
+                                    if (messageDiv._revealHandler) {
+                                        try { audio.removeEventListener('timeupdate', messageDiv._revealHandler); } catch (e) {}
+                                    }
+                                    if (messageDiv._revealEndHandler) {
+                                        try { audio.removeEventListener('ended', messageDiv._revealEndHandler); } catch (e) {}
+                                    }
+
+                                    // Helper to update revealed words based on audio time
+                                    function revealByTime() {
+                                        if (!isFinite(audio.duration) || audio.duration <= 0) {
+                                            return;
+                                        }
+                                        const t = Math.max(0, Math.min(audio.currentTime, audio.duration));
+                                        const fraction = t / audio.duration;
+                                        const revealCount = Math.floor(fraction * words.length);
+                                        for (let i = 0; i < revealCount; i++) {
+                                            const sp = spans[i];
+                                            if (sp && sp.style.opacity === '0') sp.style.opacity = '1';
+                                        }
+                                    }
+
+                                    // Ensure all words revealed at end and cleanup handlers
+                                    function revealEnded() {
+                                        spans.forEach(sp => sp.style.opacity = '1');
+                                        try { audio.removeEventListener('timeupdate', messageDiv._revealHandler); } catch (e) {}
+                                        try { audio.removeEventListener('ended', messageDiv._revealEndHandler); } catch (e) {}
+                                        delete messageDiv._revealHandler;
+                                        delete messageDiv._revealEndHandler;
+                                    }
+
+                                    // Store handlers on the messageDiv so we can remove them later
+                                    messageDiv._revealHandler = revealByTime;
+                                    messageDiv._revealEndHandler = revealEnded;
+
+                                    audio.addEventListener('timeupdate', messageDiv._revealHandler);
+                                    audio.addEventListener('ended', messageDiv._revealEndHandler);
+
+                                    // Also reveal some words on play immediately (warm start)
+                                    audio.addEventListener('play', revealByTime, { once: true });
+                                }
+
                                 logInteractionEvent('TRANSCRIPT', {
-                                    action: 'revealed',
+                                    action: 'playback_reveal_started',
                                     timestamp: new Date().toISOString()
                                 });
                             }
