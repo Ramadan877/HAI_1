@@ -1789,24 +1789,32 @@
                     audio.src = audioUrl.startsWith('/uploads/') ? audioUrl : `/uploads/${audioUrl}`;
                 }
 
-                let speedIndex = 0;
-                const speeds = [1, 1.5, 2];
-                
-                audio.addEventListener('loadedmetadata', () => {
-                    if (isFinite(audio.duration) && audio.duration > 0) {
-                        const mins = Math.floor(audio.duration / 60);
-                        const secs = Math.floor(audio.duration % 60).toString().padStart(2, '0');
-                        durationDisplay.textContent = `${mins}:${secs}`;
-                        console.log(`Audio duration loaded: ${mins}:${secs}`);
-                    }
-                });
-                
-                audio.addEventListener('error', (e) => {
-                    console.error('Audio loading error:', e);
-                    durationDisplay.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
-                });
+                // Disable play button until audio is actually playable to avoid
+                // showing the pause icon when audio isn't yet ready.
+                playButton.style.pointerEvents = 'none';
+                playButton.style.opacity = '0.6';
+                playButton.title = 'Loading audio...';
 
+                function markPlayable() {
+                    playButton.style.pointerEvents = 'auto';
+                    playButton.style.opacity = '1';
+                    playButton.title = 'Play audio';
+                    try {
+                        audio.removeEventListener('canplay', markPlayable);
+                        audio.removeEventListener('canplaythrough', markPlayable);
+                        audio.removeEventListener('loadedmetadata', markPlayable);
+                    } catch (e) {}
+                }
+
+                audio.addEventListener('canplay', markPlayable);
+                audio.addEventListener('canplaythrough', markPlayable);
+                audio.addEventListener('loadedmetadata', markPlayable);
+
+                let speedIndex = 0;
                 playButton.addEventListener('click', () => {
+                    // Ignore clicks until the audio is marked playable
+                    if (playButton.style.pointerEvents === 'none') return;
+
                     if (audio.paused) {
                         logInteractionEvent('BUTTON_CLICK', { 
                             button: 'audio_play',
@@ -1815,86 +1823,93 @@
                             concept: getCurrentConcept(),
                             timestamp: new Date().toISOString()
                         });
-                        
+
                         stopAllAudio();
-                        audio.play();
-                        playButton.innerHTML = '<i class="fas fa-pause"></i>';
-                        if (sender === 'ai') {
-                            siriOrb.style.boxShadow = "0 0 20px 5px rgba(0, 128, 255, 0.7)";
-                            const transcriptDiv = messageDiv.querySelector('.transcript-text.transcript-unplayed');
-                            if (transcriptDiv) {
-                                // Show the transcript container but keep content hidden for progressive reveal
-                                transcriptDiv.style.display = 'block';
-                                transcriptDiv.style.opacity = '1';
-                                transcriptDiv.classList.remove('transcript-unplayed');
 
-                                // Progressive, playback-synced word-by-word reveal.
-                                // If the transcript is available, split into words and reveal them
-                                // proportionally over the audio duration. This is a simple fallback
-                                // when precise word timestamps are not available.
-                                const fullText = transcriptDiv.textContent || '';
-                                const words = fullText.trim().split(/\s+/).filter(Boolean);
-                                transcriptDiv.textContent = '';
+                        // Attempt to play and only update UI once playback actually starts
+                        const playPromise = audio.play();
+                        const startPlaybackActions = () => {
+                            playButton.innerHTML = '<i class="fas fa-pause"></i>';
+                            if (sender === 'ai') {
+                                siriOrb.style.boxShadow = "0 0 20px 5px rgba(0, 128, 255, 0.7)";
 
-                                if (words.length === 0) {
-                                    transcriptDiv.textContent = fullText;
-                                } else {
-                                    // Create spans for each word so we can reveal them
-                                    transcriptDiv.innerHTML = words.map(w => `<span class=\"word\" style=\"opacity:0; transition: opacity 0.12s linear;\">${escapeHtml(w)}</span>`).join(' ');
-                                    const spans = Array.from(transcriptDiv.querySelectorAll('.word'));
+                                const transcriptDiv = messageDiv.querySelector('.transcript-text.transcript-unplayed');
+                                if (transcriptDiv) {
+                                    // Show the transcript container but keep content hidden for progressive reveal
+                                    transcriptDiv.style.display = 'block';
+                                    transcriptDiv.style.opacity = '1';
+                                    transcriptDiv.classList.remove('transcript-unplayed');
 
-                                    // Remove any previously attached reveal handlers for this message
-                                    if (messageDiv._revealHandler) {
-                                        try { audio.removeEventListener('timeupdate', messageDiv._revealHandler); } catch (e) {}
-                                    }
-                                    if (messageDiv._revealEndHandler) {
-                                        try { audio.removeEventListener('ended', messageDiv._revealEndHandler); } catch (e) {}
-                                    }
+                                    const fullText = transcriptDiv.textContent || '';
+                                    const words = fullText.trim().split(/\s+/).filter(Boolean);
+                                    transcriptDiv.textContent = '';
 
-                                    // Helper to update revealed words based on audio time
-                                    function revealByTime() {
-                                        if (!isFinite(audio.duration) || audio.duration <= 0) {
-                                            return;
+                                    if (words.length === 0) {
+                                        transcriptDiv.textContent = fullText;
+                                    } else {
+                                        transcriptDiv.innerHTML = words.map(w => `<span class=\"word\" style=\"opacity:0; transition: opacity 0.12s linear;\">${escapeHtml(w)}</span>`).join(' ');
+                                        const spans = Array.from(transcriptDiv.querySelectorAll('.word'));
+
+                                        if (messageDiv._revealHandler) {
+                                            try { audio.removeEventListener('timeupdate', messageDiv._revealHandler); } catch (e) {}
                                         }
-                                        const t = Math.max(0, Math.min(audio.currentTime, audio.duration));
-                                        const fraction = t / audio.duration;
-                                        const revealCount = Math.floor(fraction * words.length);
-                                        for (let i = 0; i < revealCount; i++) {
-                                            const sp = spans[i];
-                                            if (sp && sp.style.opacity === '0') sp.style.opacity = '1';
+                                        if (messageDiv._revealEndHandler) {
+                                            try { audio.removeEventListener('ended', messageDiv._revealEndHandler); } catch (e) {}
                                         }
+
+                                        function revealByTime() {
+                                            if (!isFinite(audio.duration) || audio.duration <= 0) return;
+                                            const t = Math.max(0, Math.min(audio.currentTime, audio.duration));
+                                            const fraction = t / audio.duration;
+                                            const revealCount = Math.floor(fraction * words.length);
+                                            for (let i = 0; i < revealCount; i++) {
+                                                const sp = spans[i];
+                                                if (sp && sp.style.opacity === '0') sp.style.opacity = '1';
+                                            }
+                                        }
+
+                                        function revealEnded() {
+                                            spans.forEach(sp => sp.style.opacity = '1');
+                                            try { audio.removeEventListener('timeupdate', messageDiv._revealHandler); } catch (e) {}
+                                            try { audio.removeEventListener('ended', messageDiv._revealEndHandler); } catch (e) {}
+                                            delete messageDiv._revealHandler;
+                                            delete messageDiv._revealEndHandler;
+                                        }
+
+                                        messageDiv._revealHandler = revealByTime;
+                                        messageDiv._revealEndHandler = revealEnded;
+
+                                        audio.addEventListener('timeupdate', messageDiv._revealHandler);
+                                        audio.addEventListener('ended', messageDiv._revealEndHandler);
+
+                                        audio.addEventListener('play', revealByTime, { once: true });
                                     }
 
-                                    // Ensure all words revealed at end and cleanup handlers
-                                    function revealEnded() {
-                                        spans.forEach(sp => sp.style.opacity = '1');
-                                        try { audio.removeEventListener('timeupdate', messageDiv._revealHandler); } catch (e) {}
-                                        try { audio.removeEventListener('ended', messageDiv._revealEndHandler); } catch (e) {}
-                                        delete messageDiv._revealHandler;
-                                        delete messageDiv._revealEndHandler;
-                                    }
-
-                                    // Store handlers on the messageDiv so we can remove them later
-                                    messageDiv._revealHandler = revealByTime;
-                                    messageDiv._revealEndHandler = revealEnded;
-
-                                    audio.addEventListener('timeupdate', messageDiv._revealHandler);
-                                    audio.addEventListener('ended', messageDiv._revealEndHandler);
-
-                                    // Also reveal some words on play immediately (warm start)
-                                    audio.addEventListener('play', revealByTime, { once: true });
+                                    logInteractionEvent('TRANSCRIPT', {
+                                        action: 'playback_reveal_started',
+                                        timestamp: new Date().toISOString()
+                                    });
                                 }
-
-                                logInteractionEvent('TRANSCRIPT', {
-                                    action: 'playback_reveal_started',
-                                    timestamp: new Date().toISOString()
-                                });
                             }
+
+                            logInteractionEvent('AUDIO_PLAYBACK', { 
+                                action: 'started',
+                                timestamp: audio.currentTime.toFixed(2)
+                            });
+                        };
+
+                        if (playPromise !== undefined) {
+                            playPromise.then(() => {
+                                startPlaybackActions();
+                            }).catch(err => {
+                                console.error('Audio play failed:', err);
+                                // leave button as play to indicate not playing
+                                playButton.innerHTML = '<i class="fas fa-play"></i>';
+                            });
+                        } else {
+                            // Synchronous play path
+                            startPlaybackActions();
                         }
-                        logInteractionEvent('AUDIO_PLAYBACK', { 
-                            action: 'started',
-                            timestamp: audio.currentTime.toFixed(2)
-                        });
                     } else {
                         logInteractionEvent('BUTTON_CLICK', { 
                             button: 'audio_pause',
