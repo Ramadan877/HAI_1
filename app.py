@@ -1015,6 +1015,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     - When correct: confirm and tell them to move to the next concept.
     - When incorrect: give one specific hint only.
     - No emojis or lists.
+    """
 
     user_prompt = f"""
     User Explanation: {user_message}
