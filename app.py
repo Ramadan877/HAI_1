@@ -485,6 +485,9 @@ def stream_submit_message_v1():
         golden_answer = concepts[concept_name]['golden_answer']
 
         user_transcript = ''
+        # Allow either an uploaded audio file or a text message field named 'message'
+        user_transcript = request.form.get('message', '')
+
         if 'audio' in request.files:
             audio_file = request.files['audio']
             if audio_file:
@@ -885,8 +888,18 @@ def submit_message():
         
         concept_attempts = session.get('concept_attempts', {})
         attempt_count = concept_attempts.get(concept_name, 0)
-        
-        conversation_history = session.get('conversation_history', {}).get(concept_name, [])
+
+        # Ensure conversation_history in session is a dict (older sessions or other versions
+        # may have stored it as a list). Coerce/reset if needed to avoid attribute errors.
+        conv_store = session.get('conversation_history')
+        if conv_store is None or isinstance(conv_store, dict):
+            # safe to use .get
+            conversation_history = (conv_store or {}).get(concept_name, [])
+        else:
+            # Unexpected type (e.g., list) - reset to empty dict for compatibility
+            print(f"Warning: session['conversation_history'] has unexpected type {type(conv_store)}, resetting to dict")
+            session['conversation_history'] = {}
+            conversation_history = []
         
         if 'audio' in request.files:
             audio_file = request.files['audio']
