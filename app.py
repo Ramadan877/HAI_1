@@ -511,8 +511,8 @@ def stream_submit_message_v1():
                 stream_resp = openai.ChatCompletion.create(
                     model='gpt-4o-mini',
                     messages=messages,
-                    max_tokens=100,
-                    temperature=0.5,
+                    max_tokens=80,
+                    temperature=0.4,
                     stream=True
                 )
 
@@ -1089,7 +1089,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=120,
+            max_tokens=80,
             temperature=0.4,
         )
         ai_response = response.choices[0].message.content.strip()
