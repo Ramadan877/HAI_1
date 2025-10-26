@@ -2,10 +2,10 @@ from flask import Flask, request, render_template, jsonify, session, send_from_d
 from werkzeug.utils import secure_filename
 from flask_cors import CORS 
 import openai
-from difflib import SequenceMatcher
 import requests
 import os
 import re
+from difflib import SequenceMatcher
 from gtts import gTTS
 import whisper  
 import json
@@ -1025,11 +1025,18 @@ def submit_message():
 def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
     """Generate concise, supportive, and pedagogically effective feedback for 3 attempts with natural flow."""
 
+    import re
+    import openai
+
     if not golden_answer or not concept_name:
         return (
             "I can’t provide feedback yet because the concept context isn’t set. "
             "Please make sure both the concept and golden answer are defined."
         )
+
+    history_context = ""
+    if conversation_history and len(conversation_history) > 0:
+        history_context = "\nRecent conversation:\n" + "\n".join(conversation_history[-3:])
     
 
     # --- Normalize for similarity comparison ---
@@ -1046,11 +1053,6 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
             "You’ve captured the main idea correctly. "
             "You can now move on to the next concept."
         )
-
-
-    history_context = ""
-    if conversation_history and len(conversation_history) > 0:
-        history_context = "\nPrevious short context:\n" + "\n".join(conversation_history[-4:])
 
     # Base system instructions
     base_prompt = f"""
