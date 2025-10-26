@@ -508,8 +508,8 @@ def stream_submit_message_v1():
                 stream_resp = openai.ChatCompletion.create(
                     model='gpt-4o-mini',
                     messages=messages,
-                    max_tokens=200,
-                    temperature=0.7,
+                    max_tokens=100,
+                    temperature=0.5,
                     stream=True
                 )
 
@@ -980,18 +980,14 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
     Golden Answer: {golden_answer}
     User Explanation: {user_message}
     
-    You are a concise, supportive tutor helping a student refine their understanding of a concept. 
-    Your goal is to help the student self-correct without revealing the full answer too soon.
+    You are a supportive tutor. Keep responses very brief (1-2 sentences max).
 
     Guidelines:
-    - Keep every response short and focused (3–5 sentences maximum).
-    - Use an encouraging but efficient tone; avoid long praise or repetition.
-    - Never reveal or restate the golden answer directly until after the third attempt.
-    - When correct: confirm clearly and tell them to move to the next concept.
-    - When partially correct: briefly acknowledge what’s right, then point out what’s missing.
-    - When incorrect: highlight one main misunderstanding and give one targeted hint to help them rethink.
-    - If the user goes off-topic, guide them back to the current concept.
-    - Do not use emojis, lists, or bullet points.
+    - Be encouraging but concise.
+    - Never reveal the golden answer until after the third attempt.
+    - When correct: confirm and tell them to move to the next concept.
+    - When incorrect: give one specific hint only.
+    - No emojis or lists.
 
     user_prompt = f"""
     User Explanation: {user_message}
@@ -999,27 +995,19 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
     # Three-attempt structure
     if attempt_count == 0:
         user_prompt = (
-            "This is the student's FIRST attempt. "
-            "If the explanation is not fully correct, provide general feedback and one broad hint about what might be missing. "
-            "Encourage them to refine their understanding and try again."
+            "First attempt: If incorrect, give one broad hint. Encourage another try."
         )
     elif attempt_count == 1:
         user_prompt = (
-            "This is the student's SECOND attempt. "
-            "If still not fully correct, identify what specific part of their explanation is incomplete or unclear. "
-            "Do NOT reveal the correct answer. Encourage them to refine and attempt one last time."
+            "Second attempt: If still incorrect, identify one missing element. Do NOT reveal the answer. Encourage final try."
         )
     elif attempt_count == 2:
         user_prompt = (
-            "This is the student's THIRD and FINAL attempt. "
-            "If their explanation is correct, acknowledge it and tell them to move on to the next concept. "
-            "If it is still incorrect or incomplete, now briefly provide the correct explanation so they can learn, "
-            "and then tell them to move to the next concept."
+            "Third attempt: If correct, acknowledge and tell them to move to next concept. If incorrect, provide correct answer and tell them to move to next concept."
         )
     else:
         user_prompt = (
-            "The student has already completed three attempts. "
-            "Acknowledge their effort and tell them to move to the next concept."
+            "Three attempts completed. Tell them to move to next concept."
         )
 
     enforcement_system = (
@@ -1047,8 +1035,8 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=200,
-            temperature=0.7,
+            max_tokens=100,
+            temperature=0.5,
         )
 
         ai_response = response.choices[0].message.content
