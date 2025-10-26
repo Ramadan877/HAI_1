@@ -893,6 +893,9 @@ def submit_message():
         concept_attempts = session.get('concept_attempts', {})
         attempt_count = concept_attempts.get(concept_name, 0)
         
+        # Get conversation history for this concept
+        conversation_history = session.get('conversation_history', {}).get(concept_name, [])
+        
         if 'audio' in request.files:
             audio_file = request.files['audio']
             if audio_file:
@@ -917,7 +920,23 @@ def submit_message():
                         'message': 'Failed to transcribe audio'
                     }), 400
 
-        response = generate_response(user_transcript, concept_name, golden_answer, attempt_count)
+        response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
+        
+        # Update conversation history
+        if 'conversation_history' not in session:
+            session['conversation_history'] = {}
+        if concept_name not in session['conversation_history']:
+            session['conversation_history'][concept_name] = []
+        
+        # Add current interaction to history
+        session['conversation_history'][concept_name].append(f"User: {user_transcript}")
+        session['conversation_history'][concept_name].append(f"AI: {response}")
+        
+        # Keep only last 10 interactions (5 exchanges) to avoid prompt bloat
+        if len(session['conversation_history'][concept_name]) > 10:
+            session['conversation_history'][concept_name] = session['conversation_history'][concept_name][-10:]
+        
+        session.modified = True
         
         concept_attempts[concept_name] = attempt_count + 1
         session['concept_attempts'] = concept_attempts
@@ -954,7 +973,7 @@ def submit_message():
                 'user_transcript': user_transcript,
                 'ai_audio_url': ai_audio_filename,
                 'attempt_count': attempt_count + 1,
-                'should_move_to_next': attempt_count >= 2 
+                'should_move_to_next': attempt_count >= 3 
             })
         else:
             return jsonify({
@@ -969,21 +988,29 @@ def submit_message():
             'message': str(e)
         }), 500
 
-def generate_response(user_message, concept_name, golden_answer, attempt_count):
-    """Generate a response dynamically using OpenAI GPT."""
+def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
+    """Generate a response dynamically using OpenAI GPT with conversation history."""
 
     if not golden_answer or not concept_name:
         return "As your tutor, I'm not able to provide you with feedback without having context about your explanation. Please ensure the context is set."
     
+    # Build conversation history context
+    history_context = ""
+    if conversation_history and len(conversation_history) > 0:
+        history_context = "\n\nPrevious conversation:\n"
+        for entry in conversation_history[-5:]:  # Last 5 interactions
+            history_context += f"- {entry}\n"
+    
     base_prompt = f"""
     Context: {concept_name}
     Golden Answer: {golden_answer}
-    User Explanation: {user_message}
+    User Explanation: {user_message}{history_context}
     
     You are a supportive tutor. Keep responses very brief (1-2 sentences max).
 
     Guidelines:
     - Be encouraging but concise.
+    - Reference previous conversation when relevant to show you remember.
     - Never reveal the golden answer until after the third attempt.
     - When correct: confirm and tell them to move to the next concept.
     - When incorrect: give one specific hint only.
@@ -1040,13 +1067,6 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
         )
 
         ai_response = response.choices[0].message.content
-
-        history.append({"role": "assistant", "content": ai_response})
-        
-        if 'conversation_history' not in session:
-            session['conversation_history'] = []
-        session['conversation_history'].append(history)
-        session.modified = True
 
         return ai_response
     except Exception as e:
