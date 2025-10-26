@@ -980,38 +980,52 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count):
     Golden Answer: {golden_answer}
     User Explanation: {user_message}
     
-    You are a friendly and encouraging tutor, helping a student refine their understanding of a concept in a supportive way. Your goal is to evaluate the student's explanation of this concept and provide warm, engaging feedback:
-        - If the user's explanation includes all the relevant aspects of the golden answer, celebrate their effort and reinforce their confidence. Inform them that their explanation is correct and they have completed the self-explanation for this concept. Instruct them to proceed to the next concept.
-        - If the explanation is partially correct, acknowledge their progress and gently guide them toward refining their answer.
-        - If it's incorrect, provide constructive and positive feedback without discouraging them. Offer hints and encouragement.
-        - Do not provide the golden answer or parts of it directly. Instead, guide the user to arrive at it themselves.
-    Use a conversational tone, making the user feel comfortable and motivated to keep trying but refrain from using emojis in the text.
-    Ignore any emojis that are part of the user's explanation.
-    If the user is not talking about the current concept, guide them back to the task of self-explaining the current concept.
-    """
+    You are a concise, supportive tutor helping a student refine their understanding of a concept. 
+    Your goal is to help the student self-correct without revealing the full answer too soon.
+
+    Guidelines:
+    - Keep every response short and focused (3–5 sentences maximum).
+    - Use an encouraging but efficient tone; avoid long praise or repetition.
+    - Never reveal or restate the golden answer directly until after the third attempt.
+    - When correct: confirm clearly and tell them to move to the next concept.
+    - When partially correct: briefly acknowledge what’s right, then point out what’s missing.
+    - When incorrect: highlight one main misunderstanding and give one targeted hint to help them rethink.
+    - If the user goes off-topic, guide them back to the current concept.
+    - Do not use emojis, lists, or bullet points.
 
     user_prompt = f"""
     User Explanation: {user_message}
     """
-
+    # Three-attempt structure
     if attempt_count == 0:
-        user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide general feedback and a broad hint to guide the user."
+        user_prompt = (
+            "This is the student's FIRST attempt. "
+            "If the explanation is not fully correct, provide general feedback and one broad hint about what might be missing. "
+            "Encourage them to refine their understanding and try again."
+        )
     elif attempt_count == 1:
-        user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide more specific feedback and highlight key elements the user missed."
+        user_prompt = (
+            "This is the student's SECOND attempt. "
+            "If still not fully correct, identify what specific part of their explanation is incomplete or unclear. "
+            "Do NOT reveal the correct answer. Encourage them to refine and attempt one last time."
+        )
     elif attempt_count == 2:
-        user_prompt += "\nIf the explanation is correct, communicate this to the user. If it is not correct, provide the correct explanation, as the user has made multiple attempts."
+        user_prompt = (
+            "This is the student's THIRD and FINAL attempt. "
+            "If their explanation is correct, acknowledge it and tell them to move on to the next concept. "
+            "If it is still incorrect or incomplete, now briefly provide the correct explanation so they can learn, "
+            "and then tell them to move to the next concept."
+        )
     else:
-        user_prompt += "\nLet the user know they have completed three self-explanation attempts. Instruct them to stop here and tell them to continue with the next concept."
-
-    history = [
-        {"role": "system", "content": base_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
+        user_prompt = (
+            "The student has already completed three attempts. "
+            "Acknowledge their effort and tell them to move to the next concept."
+        )
 
     enforcement_system = (
-        "You MUST respond only in English. If the user's input is in any other language, do NOT reply in that language; "
-        "instead, in English, politely ask the user to repeat their explanation in English because English is the language of this interaction. "
-        "Do not use emojis, emoticons, or any non-text decorations. Keep the reply short and instructive when asking for English."
+        "You must respond only in English. "
+        "If the user writes in another language, politely ask in English for them to repeat their explanation in English. "
+        "Keep that message short and clear."
     )
 
     def detect_non_english(text):
