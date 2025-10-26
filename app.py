@@ -994,89 +994,91 @@ def submit_message():
         }), 500
 
 def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
-    """Generate a response dynamically using OpenAI GPT with conversation history."""
+    """Generate concise, supportive, and pedagogically effective feedback for 3 attempts with natural flow."""
 
     if not golden_answer or not concept_name:
-        return "As your tutor, I'm not able to provide you with feedback without having context about your explanation. Please ensure the context is set."
-    
-    # Build conversation history context
+        return (
+            "I can’t provide feedback yet because the concept context isn’t set. "
+            "Please make sure both the concept and golden answer are defined."
+        )
+
     history_context = ""
     if conversation_history and len(conversation_history) > 0:
-        history_context = "\n\nPrevious conversation:\n"
-        for entry in conversation_history[-5:]:  # Last 5 interactions
-            history_context += f"- {entry}\n"
-    
+        history_context = "\nPrevious short context:\n" + "\n".join(conversation_history[-4:])
+
+    # Base system instructions
     base_prompt = f"""
     Context: {concept_name}
     Golden Answer: {golden_answer}
-    User Explanation: {user_message}{history_context}
-    
-    You are a supportive tutor. Keep responses very brief (1-2 sentences max).
+    Student Explanation: {user_message}
+    {history_context}
+
+    You are a concise, friendly tutor guiding the student to self-explain a concept.
+    The tone should be warm, motivating, and professional — not overly enthusiastic or verbose.
 
     Guidelines:
-    - Be encouraging but concise.
-    - Reference previous conversation when relevant to show you remember.
-    - Never reveal the golden answer until after the third attempt.
-    - When correct: confirm and tell them to move to the next concept.
-    - When incorrect: give one specific hint only.
-    - No emojis or lists.
+    - Keep responses under 3 short sentences.
+    - Acknowledge correct parts briefly; do not overpraise.
+    - Never reveal the golden answer before the third attempt.
+    - When the answer is fully correct at any attempt:
+        → Confirm correctness clearly and tell the student to move to the next concept.
+    - When the answer is partially correct:
+        → Mention what is right and point out one missing or unclear part. Give one brief hint.
+    - When the answer is incorrect:
+        → Identify one key misunderstanding and give a small clue for rethinking.
+    - On the third attempt:
+        → If correct, confirm and guide to next concept.
+        → If incorrect, briefly provide the correct explanation, then tell the student to move to the next concept.
+    - Use plain English, no emojis, no lists, no unnecessary filler.
     """
 
-    user_prompt = f"""
-    User Explanation: {user_message}
-    """
-    # Three-attempt structure
+    # Attempt-based user guidance
     if attempt_count == 0:
         user_prompt = (
-            "First attempt: If incorrect, give one broad hint. Encourage another try."
+            "This is the student's FIRST attempt. If not correct, provide one general hint about what might be missing. "
+            "Encourage them to refine their understanding and try again."
         )
     elif attempt_count == 1:
         user_prompt = (
-            "Second attempt: If still incorrect, identify one missing element. Do NOT reveal the answer. Encourage final try."
+            "This is the student's SECOND attempt. If still incomplete, identify the missing aspect clearly, "
+            "but do NOT reveal the correct answer. Encourage one final try."
         )
     elif attempt_count == 2:
         user_prompt = (
-            "Third attempt: If correct, acknowledge and tell them to move to next concept. If incorrect, provide correct answer and tell them to move to next concept."
+            "This is the student's THIRD and FINAL attempt. If correct, confirm and tell them to move on. "
+            "If still incorrect, now briefly provide the correct explanation and guide them to move to the next concept."
         )
     else:
-        user_prompt = (
-            "Three attempts completed. Tell them to move to next concept."
-        )
+        user_prompt = "The student has already completed three attempts. Tell them to move to the next concept."
 
     enforcement_system = (
-        "You must respond only in English. "
-        "If the user writes in another language, politely ask in English for them to repeat their explanation in English. "
-        "Keep that message short and clear."
+        "Respond only in English. "
+        "If the student's message is in another language, politely ask them to repeat it in English. "
+        "Keep your message short and clear."
     )
 
-    def detect_non_english(text):
-        if not text:
-            return False
-        non_latin_regex = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
-        return bool(non_latin_regex.search(text))
+    non_english = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
+    if non_english.search(user_message):
+        return "Please repeat your explanation in English so I can provide feedback."
 
-    if detect_non_english(user_message):
-        return "Please repeat your explanation in English so I can provide feedback. This interaction uses English only."
+    messages = [
+        {"role": "system", "content": enforcement_system},
+        {"role": "system", "content": base_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
 
     try:
-        messages = [
-            {"role": "system", "content": enforcement_system},
-            {"role": "system", "content": base_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=100,
-            temperature=0.5,
+            max_tokens=120,
+            temperature=0.4,
         )
-
-        ai_response = response.choices[0].message.content
-
+        ai_response = response.choices[0].message.content.strip()
         return ai_response
     except Exception as e:
         return f"Error generating AI response: {str(e)}"
+
 
 @app.route('/pdf')
 def serve_pdf():
