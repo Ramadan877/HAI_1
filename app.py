@@ -934,48 +934,51 @@ def submit_message():
         session['conversation_history'][concept_name].append(f"User: {user_transcript}")
         session['conversation_history'][concept_name].append(f"AI: {response}")
         
-        # Keep only last 10 interactions (5 exchanges) to avoid prompt bloat
         if len(session['conversation_history'][concept_name]) > 10:
             session['conversation_history'][concept_name] = session['conversation_history'][concept_name][-10:]
         
         session.modified = True
-        
-        concept_attempts[concept_name] = attempt_count + 1
+
+        concept_attempts[concept_name] = min(attempt_count + 1, 3)
         session['concept_attempts'] = concept_attempts
-        
+
         ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
         ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-        
+
         if generate_audio(response, ai_audio_path):
             log_interaction("User", concept_name, user_transcript)
             log_interaction("AI", concept_name, response)
-            
+
             log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count + 1)
             log_interaction_to_db_only("AI", concept_name, response, attempt_count + 1)
-                
+
             session_id = session.get('session_id')
             if session_id:
                 with open(audio_path, 'rb') as f:
                     audio_data = f.read()
                 save_audio_with_cloud_backup(
-                    audio_data, audio_filename, session_id, 
+                    audio_data, audio_filename, session_id,
                     'user_audio', concept_name, attempt_count + 1
                 )
-                    
+
                 with open(ai_audio_path, 'rb') as f:
                     ai_audio_data = f.read()
                 save_audio_with_cloud_backup(
-                    ai_audio_data, ai_audio_filename, session_id, 
+                    ai_audio_data, ai_audio_filename, session_id,
                     'ai_audio', concept_name, attempt_count + 1
                 )
+
+            # Determine the returned attempt count and whether the user should move on.
+            returned_attempt = session['concept_attempts'].get(concept_name, attempt_count + 1)
+            should_move_flag = (returned_attempt >= 3)
 
             return jsonify({
                 'status': 'success',
                 'response': response,
                 'user_transcript': user_transcript,
                 'ai_audio_url': ai_audio_filename,
-                'attempt_count': attempt_count + 1,
-                'should_move_to_next': attempt_count >= 3 
+                'attempt_count': returned_attempt,
+                'should_move_to_next': should_move_flag
             })
         else:
             return jsonify({
