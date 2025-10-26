@@ -281,7 +281,8 @@ def get_cached_audio(text):
     temp_file.close()
     
     try:
-        tts = gTTS(text=text, lang='en', slow=False)
+        clean_text = clean_tts_text(text)
+        tts = gTTS(text=clean_text, lang='en', slow=False)
         tts.save(temp_path)
         return temp_path
     except Exception as e:
@@ -379,7 +380,9 @@ def generate_audio(text, file_path):
     """Generate speech (audio) from the provided text using gTTS with proper file handling."""
     try:
         try:
-            audio_bytes, content_type = synthesize_with_openai(ssml_wrap(text), voice='alloy', fmt='mp3')
+            # Clean text for TTS before constructing SSML or using gTTS fallback
+            clean_text = clean_tts_text(text)
+            audio_bytes, content_type = synthesize_with_openai(ssml_wrap(clean_text), voice='alloy', fmt='mp3')
             if audio_bytes:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 with open(file_path, 'wb') as f:
@@ -392,7 +395,7 @@ def generate_audio(text, file_path):
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
             temp_path = temp_file.name
 
-        tts = gTTS(text=text, lang='en', slow=False)
+        tts = gTTS(text=clean_text, lang='en', slow=False)
         tts.save(temp_path)
 
         if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
@@ -600,6 +603,30 @@ def ssml_wrap(text, rate='0%', pitch='0%', break_ms=250):
         return text
 
 
+def clean_tts_text(text: str) -> str:
+    """
+    Clean text before sending to Text-to-Speech.
+    Removes symbols, markdown, and formatting artifacts so TTS sounds natural.
+    """
+    if not text:
+        return ""
+    # Remove URLs
+    text = re.sub(r'http\S+', '', text)
+    # Remove markdown & code artifacts
+    text = re.sub(r'[*_#`~<>^{}\[\]|]', '', text)
+    # Replace slashes and backslashes with space (pause)
+    text = re.sub(r'[\\/]', ' ', text)
+    # Remove multiple punctuation (e.g., '!!!' -> '!')
+    text = re.sub(r'([!?.,])\1+', r'\1', text)
+    # Remove stray hyphens, underscores, and symbols
+    text = re.sub(r'[-_=+]', ' ', text)
+    # Replace multiple spaces or newlines with single space
+    text = re.sub(r'\s+', ' ', text)
+    # Trim
+    text = text.strip()
+    return text
+
+
 @app.route('/synthesize', methods=['POST'])
 def synthesize():
     try:
@@ -610,7 +637,8 @@ def synthesize():
         voice = data.get('voice', 'alloy')
         fmt = data.get('format', 'mp3')
         try:
-            ssml_text = ssml_wrap(text, rate='5%', pitch='0%', break_ms=220)
+            clean_text = clean_tts_text(text)
+            ssml_text = ssml_wrap(clean_text, rate='5%', pitch='0%', break_ms=220)
             audio_bytes, content_type = synthesize_with_openai(ssml_text, voice=voice, fmt=fmt)
             return (audio_bytes, 200, {'Content-Type': content_type, 'Content-Disposition': 'inline; filename="tts.' + fmt + '"'})
         except Exception as openai_err:
@@ -618,7 +646,7 @@ def synthesize():
         try:
             from io import BytesIO
             bio = BytesIO()
-            tts = gTTS(text=text, lang='en')
+            tts = gTTS(text=clean_text, lang='en')
             tts.write_to_fp(bio)
             bio.seek(0)
             return (bio.read(), 200, {'Content-Type': 'audio/mpeg', 'Content-Disposition': 'inline; filename="tts.mp3"'})
