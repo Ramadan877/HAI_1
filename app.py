@@ -1031,15 +1031,15 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
             "Please make sure both the concept and golden answer are defined."
         )
     
-    # === 2️⃣ Simple Similarity Check ===
-    # Normalize and compare similarity ratio between student's and golden answer
+
+    # --- Normalize for similarity comparison ---
     def normalize(text):
         return re.sub(r'[^a-z0-9\s]', '', text.lower().strip())
 
-    similarity = SequenceMatcher(None, normalize(user_message), normalize(golden_answer)).ratio()
+    user_norm = normalize(user_message)
+    golden_norm = normalize(golden_answer)
+    similarity = SequenceMatcher(None, user_norm, golden_norm).ratio()
 
-    # If user explanation is very close or matches the golden answer (≥0.8 similarity),
-    # acknowledge immediately and skip GPT generation
     if similarity >= 0.8:
         return (
             "Excellent — your explanation is clear and accurate. "
