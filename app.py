@@ -530,28 +530,23 @@ def stream_submit_message_v1():
                         final_text += token
                         yield token
 
-                # After streaming complete, generate AI audio and update session attempt counts
                 try:
-                    # update attempt counters in session
                     concept_attempts = session.get('concept_attempts', {})
                     attempt_count = concept_attempts.get(concept_name, 0)
                     attempt_count += 1
                     concept_attempts[concept_name] = attempt_count
                     session['concept_attempts'] = concept_attempts
 
-                    # prepare audio path
                     folders = get_participant_folder(participant_id, trial_type)
                     ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
                     ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
 
-                    # generate audio (tries OpenAI TTS, falls back to gTTS inside generate_audio)
                     generated = False
                     try:
                         generated = generate_audio(final_text, ai_audio_path)
                     except Exception as e:
                         print('Audio generation error after streaming:', str(e))
 
-                    # record audio backup (non-blocking best-effort)
                     try:
                         session_id = session.get('session_id')
                         if session_id and os.path.exists(ai_audio_path):
@@ -561,13 +556,11 @@ def stream_submit_message_v1():
                     except Exception as e:
                         print('Failed to backup AI audio:', str(e))
 
-                    # yield a JSON metadata marker so client can handle final state and play audio
                     meta = json.dumps({
                         'ai_audio_url': ai_audio_filename,
                         'attempt_count': attempt_count,
                         'response': final_text
                     })
-                    # marker boundaries so client can reliably parse
                     yield '\n__JSON__START__' + meta + '__JSON__END__\n'
                 except Exception as e:
                     yield f"\n[error-postprocess] {str(e)}\n"
@@ -893,7 +886,6 @@ def submit_message():
         concept_attempts = session.get('concept_attempts', {})
         attempt_count = concept_attempts.get(concept_name, 0)
         
-        # Get conversation history for this concept
         conversation_history = session.get('conversation_history', {}).get(concept_name, [])
         
         if 'audio' in request.files:
@@ -922,13 +914,11 @@ def submit_message():
 
         response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
         
-        # Update conversation history
         if 'conversation_history' not in session:
             session['conversation_history'] = {}
         if concept_name not in session['conversation_history']:
             session['conversation_history'][concept_name] = []
         
-        # Add current interaction to history
         session['conversation_history'][concept_name].append(f"User: {user_transcript}")
         session['conversation_history'][concept_name].append(f"AI: {response}")
         
