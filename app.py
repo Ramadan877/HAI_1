@@ -485,7 +485,6 @@ def stream_submit_message_v1():
         golden_answer = concepts[concept_name]['golden_answer']
 
         user_transcript = ''
-        # Allow either an uploaded audio file or a text message field named 'message'
         user_transcript = request.form.get('message', '')
 
         if 'audio' in request.files:
