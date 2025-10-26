@@ -2,6 +2,7 @@ from flask import Flask, request, render_template, jsonify, session, send_from_d
 from werkzeug.utils import secure_filename
 from flask_cors import CORS 
 import openai
+from difflib import SequenceMatcher
 import requests
 import os
 import re
@@ -1001,6 +1002,23 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
             "I can’t provide feedback yet because the concept context isn’t set. "
             "Please make sure both the concept and golden answer are defined."
         )
+    
+    # === 2️⃣ Simple Similarity Check ===
+    # Normalize and compare similarity ratio between student's and golden answer
+    def normalize(text):
+        return re.sub(r'[^a-z0-9\s]', '', text.lower().strip())
+
+    similarity = SequenceMatcher(None, normalize(user_message), normalize(golden_answer)).ratio()
+
+    # If user explanation is very close or matches the golden answer (≥0.8 similarity),
+    # acknowledge immediately and skip GPT generation
+    if similarity >= 0.8:
+        return (
+            "Excellent — your explanation is clear and accurate. "
+            "You’ve captured the main idea correctly. "
+            "You can now move on to the next concept."
+        )
+
 
     history_context = ""
     if conversation_history and len(conversation_history) > 0:
