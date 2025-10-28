@@ -1130,6 +1130,11 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     if non_english.search(user_message):
         return "Please repeat your explanation in English so I can provide feedback."
 
+    enforcement_system = (
+        "Respond only in English. "
+        "If the student's input is not in English, ask politely in English to repeat it in English."
+    )
+
     messages = [
         {"role": "system", "content": enforcement_system},
         {"role": "system", "content": base_prompt},
