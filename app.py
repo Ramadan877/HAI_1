@@ -949,11 +949,6 @@ def submit_message():
                         'message': 'Failed to transcribe audio'
                     }), 400
 
-        # Quick similarity pre-check so that a close or exact student answer
-        # immediately marks the concept as completed (so the frontend can
-        # guide the student to move on). This mirrors the logic inside
-        # generate_response but makes sure the session attempt state
-        # reflects success right away.
         def _normalize_for_check(text):
             import re
             return re.sub(r'[^a-z0-9\s]', '', (text or '').lower().strip())
@@ -982,8 +977,6 @@ def submit_message():
         
         session.modified = True
 
-        # If the user's answer was sufficiently similar to the golden answer
-        # mark the concept as completed (3) so the UI knows they can move on.
         if is_similar_enough:
             concept_attempts[concept_name] = 3
         else:
@@ -1016,7 +1009,6 @@ def submit_message():
                     'ai_audio', concept_name, attempt_count + 1
                 )
 
-            # Determine the returned attempt count and whether the user should move on.
             returned_attempt = session['concept_attempts'].get(concept_name, attempt_count + 1)
             should_move_flag = (returned_attempt >= 3)
 
@@ -1065,10 +1057,6 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     user_norm = normalize(user_message)
     golden_norm = normalize(golden_answer)
 
-    # Two lightweight similarity checks combined: character-based ratio
-    # and a word-level Jaccard overlap. This makes exact or near-exact
-    # matches reliably pass while still being robust to small formatting
-    # differences.
     try:
         char_ratio = SequenceMatcher(None, user_norm, golden_norm).ratio()
     except Exception:
@@ -1086,12 +1074,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
 
     word_ratio = _word_jaccard(user_norm, golden_norm)
 
-    # Use the more permissive of the two measures so synonyms or small
-    # reorderings don't prevent an otherwise-correct answer from passing.
     similarity = max(char_ratio, word_ratio)
-
-    # Debug trace (safe to remove later) to help tune threshold if needed.
-    print(f"Similarity check for concept '{concept_name}': char={char_ratio:.3f}, word={word_ratio:.3f}, used={similarity:.3f}")
 
     if similarity >= 0.8:
         return (
@@ -1149,8 +1132,31 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
             "Acknowledge their effort and tell them to move to the next concept."
         )
 
-    non_english = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
-    if non_english.search(user_message):
+    # Heuristic: only ask to repeat in English when the user's input contains
+    # a substantial proportion of non-Latin characters. This avoids false
+    # positives for accented, noisy, or partially-transcribed English.
+    non_english_re = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
+
+    def detect_mostly_non_latin(text, threshold=0.35, min_non_latin=3):
+        """Return True if more than `threshold` fraction of characters are
+        non-Latin (as defined by non_english_re) and at least min_non_latin
+        such characters exist. This reduces accidental triggers for noisy
+        English transcripts."""
+        if not text or not isinstance(text, str):
+            return False
+        # Short answers shouldn't be forced to repeat unless clearly non-latin
+        if len(text.strip()) <= 3:
+            return bool(non_english_re.search(text)) and len(non_english_re.findall(text)) >= min_non_latin
+
+        total_chars = len(text)
+        non_latin_chars = len(non_english_re.findall(text))
+        try:
+            frac = non_latin_chars / float(total_chars)
+        except Exception:
+            frac = 0.0
+        return (non_latin_chars >= min_non_latin) and (frac >= threshold)
+
+    if detect_mostly_non_latin(user_message):
         return "Please repeat your explanation in English so I can provide feedback."
 
     enforcement_system = (
