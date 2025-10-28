@@ -917,14 +917,10 @@ def submit_message():
         concept_attempts = session.get('concept_attempts', {})
         attempt_count = concept_attempts.get(concept_name, 0)
 
-        # Ensure conversation_history in session is a dict (older sessions or other versions
-        # may have stored it as a list). Coerce/reset if needed to avoid attribute errors.
         conv_store = session.get('conversation_history')
         if conv_store is None or isinstance(conv_store, dict):
-            # safe to use .get
             conversation_history = (conv_store or {}).get(concept_name, [])
         else:
-            # Unexpected type (e.g., list) - reset to empty dict for compatibility
             print(f"Warning: session['conversation_history'] has unexpected type {type(conv_store)}, resetting to dict")
             session['conversation_history'] = {}
             conversation_history = []
@@ -1064,11 +1060,38 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
 
     # --- Normalize for similarity comparison ---
     def normalize(text):
-        return re.sub(r'[^a-z0-9\s]', '', text.lower().strip())
+        return re.sub(r'[^a-z0-9\s]', '', (text or '').lower().strip())
 
     user_norm = normalize(user_message)
     golden_norm = normalize(golden_answer)
-    similarity = SequenceMatcher(None, user_norm, golden_norm).ratio()
+
+    # Two lightweight similarity checks combined: character-based ratio
+    # and a word-level Jaccard overlap. This makes exact or near-exact
+    # matches reliably pass while still being robust to small formatting
+    # differences.
+    try:
+        char_ratio = SequenceMatcher(None, user_norm, golden_norm).ratio()
+    except Exception:
+        char_ratio = 0.0
+
+    def _word_jaccard(a, b):
+        a_set = set(a.split())
+        b_set = set(b.split())
+        if not a_set and not b_set:
+            return 0.0
+        try:
+            return len(a_set & b_set) / len(a_set | b_set)
+        except Exception:
+            return 0.0
+
+    word_ratio = _word_jaccard(user_norm, golden_norm)
+
+    # Use the more permissive of the two measures so synonyms or small
+    # reorderings don't prevent an otherwise-correct answer from passing.
+    similarity = max(char_ratio, word_ratio)
+
+    # Debug trace (safe to remove later) to help tune threshold if needed.
+    print(f"Similarity check for concept '{concept_name}': char={char_ratio:.3f}, word={word_ratio:.3f}, used={similarity:.3f}")
 
     if similarity >= 0.8:
         return (
