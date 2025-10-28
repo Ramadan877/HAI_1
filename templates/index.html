@@ -1864,6 +1864,8 @@
                 }
 
                 let speedIndex = 0;
+                const speeds = [1, 1.5, 2];
+                try { audio.playbackRate = speeds[speedIndex]; } catch (e) { /* ignore if audio not ready */ }
                 playButton.addEventListener('click', () => {
                     if (playButton.style.pointerEvents === 'none') return;
 
