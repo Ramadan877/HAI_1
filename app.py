@@ -953,6 +953,24 @@ def submit_message():
                         'message': 'Failed to transcribe audio'
                     }), 400
 
+        # Quick similarity pre-check so that a close or exact student answer
+        # immediately marks the concept as completed (so the frontend can
+        # guide the student to move on). This mirrors the logic inside
+        # generate_response but makes sure the session attempt state
+        # reflects success right away.
+        def _normalize_for_check(text):
+            import re
+            return re.sub(r'[^a-z0-9\s]', '', (text or '').lower().strip())
+
+        try:
+            user_norm_check = _normalize_for_check(user_transcript)
+            golden_norm_check = _normalize_for_check(golden_answer)
+            pre_similarity = SequenceMatcher(None, user_norm_check, golden_norm_check).ratio()
+        except Exception:
+            pre_similarity = 0.0
+
+        is_similar_enough = (pre_similarity >= 0.8)
+
         response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
         
         if 'conversation_history' not in session:
@@ -968,7 +986,12 @@ def submit_message():
         
         session.modified = True
 
-        concept_attempts[concept_name] = min(attempt_count + 1, 3)
+        # If the user's answer was sufficiently similar to the golden answer
+        # mark the concept as completed (3) so the UI knows they can move on.
+        if is_similar_enough:
+            concept_attempts[concept_name] = 3
+        else:
+            concept_attempts[concept_name] = min(attempt_count + 1, 3)
         session['concept_attempts'] = concept_attempts
 
         ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
@@ -1080,30 +1103,28 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     - Use plain English, no emojis, no lists, no unnecessary filler.
     """
 
-    # Attempt-based user guidance
+    # ==== Attempt-level instruction ====
     if attempt_count == 0:
         user_prompt = (
-            "This is the student's FIRST attempt. If not correct, provide one general hint about what might be missing. "
-            "Encourage them to refine their understanding and try again."
+            "This is the student's FIRST attempt. If not fully correct, provide general feedback "
+            "and one broad hint about what might be missing in the form of a question."
         )
     elif attempt_count == 1:
         user_prompt = (
-            "This is the student's SECOND attempt. If still incomplete, identify the missing aspect clearly, "
-            "but do NOT reveal the correct answer. Encourage one final try."
+            "This is the student's SECOND attempt. If still incomplete, point out the missing element "
+            "or misconception again in the form of a question but DO NOT reveal the correct answer. Encourage them for one last try."
         )
     elif attempt_count == 2:
         user_prompt = (
-            "This is the student's THIRD and FINAL attempt. If correct, confirm and tell them to move on. "
-            "If still incorrect, now briefly provide the correct explanation and guide them to move to the next concept."
+            "This is the student's THIRD and FINAL attempt. "
+            "If correct, confirm and tell them to move to the next concept. "
+            "If still incorrect, now briefly provide the correct explanation and guide them to move on."
         )
     else:
-        user_prompt = "The student has already completed three attempts. Tell them to move to the next concept."
-
-    enforcement_system = (
-        "Respond only in English. "
-        "If the student's message is in another language, politely ask them to repeat it in English. "
-        "Keep your message short and clear."
-    )
+        user_prompt = (
+            "The student has already completed three attempts. "
+            "Acknowledge their effort and tell them to move to the next concept."
+        )
 
     non_english = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
     if non_english.search(user_message):
