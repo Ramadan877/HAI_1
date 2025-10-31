@@ -54,6 +54,17 @@ from database import db, Participant, Session, Interaction, Recording, UserEvent
 import uuid
 
 load_dotenv()
+from supabase import create_client
+
+# Supabase server/client configuration
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_SERVICE_KEY = os.environ.get('SUPABASE_SERVICE_ROLE_KEY') or os.environ.get('SUPABASE_KEY')
+supabase = None
+if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    except Exception as e:
+        print("Warning: could not initialize Supabase client:", e)
 
 app = Flask(__name__)
 CORS(app)  
@@ -73,6 +84,10 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 app.secret_key = os.environ.get('SECRET_KEY', 'fallback-secret-key')
 
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB limit for long recordings
+
+SUPABASE_DATABASE_URL = os.environ.get('SUPABASE_DATABASE_URL')
+if SUPABASE_DATABASE_URL:
+    app.config['SUPABASE_DATABASE_URL'] = SUPABASE_DATABASE_URL
 
 db.init_app(app)
 
@@ -115,6 +130,24 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
         )
         db.session.add(recording)
         db.session.commit()
+        # After saving locally to the render DB, enqueue background upload to Supabase (non-blocking)
+        try:
+            participant_id = None
+            try:
+                sess = Session.query.filter_by(session_id=session_id).first()
+                participant_id = sess.participant_id if sess else None
+            except Exception:
+                participant_id = None
+
+            if supabase:
+                try:
+                    executor.submit(
+                        lambda p=file_path, s=session_id, pid=participant_id: upload_and_record_supabase(p, s, pid, version='V1')
+                    )
+                except Exception as e:
+                    print('Failed to schedule supabase upload task:', e)
+        except Exception:
+            pass
         return recording.id
     except Exception as e:
         print(f"Error saving recording: {str(e)}")
@@ -122,6 +155,69 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
             db.session.rollback()
         except:
             pass
+        return None
+
+
+def upload_file_to_supabase(local_path, bucket_name='HAI', dest_path=None):
+    """Upload a local file to Supabase storage and return public URL and size.
+    This function is best-effort and will not raise to the caller if supabase is not configured.
+    """
+    if supabase is None:
+        return None, None
+    if not dest_path:
+        dest_path = os.path.basename(local_path)
+
+    try:
+        with open(local_path, 'rb') as f:
+            data = f.read()
+
+        storage = supabase.storage.from_(bucket_name)
+        storage.upload(dest_path, data)
+
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{bucket_name}/{dest_path}"
+        size = os.path.getsize(local_path)
+        return public_url, size
+    except Exception as e:
+        print('Supabase upload_file_to_supabase error:', e)
+        return None, None
+
+
+def upload_and_record_supabase(local_path, session_id=None, participant_id=None, version='V1'):
+    """High level: upload the local_path to Supabase storage bucket 'HAI' and insert a row into the
+    `uploads` table. Function swallows errors to avoid affecting main app behavior.
+    """
+    try:
+        if supabase is None:
+            return None
+        if not os.path.exists(local_path):
+            return None
+
+        # dest path namespaced by version/participant/session
+        safe_rel = os.path.basename(local_path)
+        participant_part = participant_id if participant_id else 'unknown'
+        sess_part = session_id if session_id else 'no_session'
+        dest_path = f"{version}/{participant_part}/{sess_part}/{safe_rel}"
+
+        public_url, size = upload_file_to_supabase(local_path, bucket_name='HAI', dest_path=dest_path)
+        if public_url:
+            try:
+                supabase.table('uploads').insert({
+                    'session_id': session_id,
+                    'participant_id': participant_id,
+                    'version': version,
+                    'bucket': 'HAI',
+                    'path': dest_path,
+                    'public_url': public_url,
+                    'file_name': safe_rel,
+                    'file_type': None,
+                    'file_size': size,
+                    'metadata': {'local_path': local_path}
+                }).execute()
+            except Exception as e:
+                print('Supabase metadata insert failed:', e)
+        return public_url
+    except Exception as e:
+        print('upload_and_record_supabase error:', e)
         return None
 
 def create_session_record(participant_id, trial_type, version):
@@ -367,6 +463,47 @@ def log_interaction(speaker, concept_name, message):
     except Exception as e:
         print(f"Error logging interaction: {str(e)}")
         return False
+
+
+@app.route('/finalize_session', methods=['POST'])
+def finalize_session():
+    """Endpoint called from client on unload. Upload remaining files for the participant/session to Supabase.
+    This is best-effort and non-blocking from the client perspective.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        participant_id = data.get('participant_id') or session.get('participant_id')
+        session_id = data.get('session_id') or session.get('session_id')
+        version = data.get('version') or 'V1'
+
+        if not participant_id:
+            return jsonify({'status':'error','message':'missing participant_id'}), 400
+
+        # find participant folder
+        folders = get_participant_folder(participant_id, session.get('trial_type',''))
+        participant_folder = folders['participant_folder']
+
+        uploaded = []
+        if os.path.exists(participant_folder):
+            for root, _, files in os.walk(participant_folder):
+                for fname in files:
+                    if fname.startswith('.'):
+                        continue
+                    local_path = os.path.join(root, fname)
+                    try:
+                        if 'executor' in globals() and executor:
+                            executor.submit(lambda p=local_path, s=session_id, pid=participant_id: upload_and_record_supabase(p, s, pid, version=version))
+                        else:
+                            import threading
+                            threading.Thread(target=upload_and_record_supabase, args=(local_path, session_id, participant_id, version), daemon=True).start()
+                        uploaded.append(local_path)
+                    except Exception as e:
+                        print('finalize_session scheduling failed for', local_path, e)
+
+        return jsonify({'status':'ok','scheduled':len(uploaded)}), 200
+    except Exception as e:
+        print('finalize_session error:', e)
+        return jsonify({'status':'error','message':str(e)}), 500
     
 def get_audio_filename(prefix, participant_id, interaction_number, extension='.mp3'):
     """Generate a unique audio filename with participant ID, concept name, and interaction number."""
