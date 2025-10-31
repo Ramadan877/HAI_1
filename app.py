@@ -158,7 +158,7 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
         return None
 
 
-def upload_file_to_supabase(local_path, bucket_name='HAI', dest_path=None):
+def upload_file_to_supabase(local_path, bucket_name='V1', dest_path=None):
     """Upload a local file to Supabase storage and return public URL and size.
     This function is best-effort and will not raise to the caller if supabase is not configured.
     """
@@ -198,14 +198,14 @@ def upload_and_record_supabase(local_path, session_id=None, participant_id=None,
         sess_part = session_id if session_id else 'no_session'
         dest_path = f"{version}/{participant_part}/{sess_part}/{safe_rel}"
 
-        public_url, size = upload_file_to_supabase(local_path, bucket_name='HAI', dest_path=dest_path)
+        public_url, size = upload_file_to_supabase(local_path, bucket_name='V1', dest_path=dest_path)
         if public_url:
             try:
                 supabase.table('uploads').insert({
                     'session_id': session_id,
                     'participant_id': participant_id,
                     'version': version,
-                    'bucket': 'HAI',
+                    'bucket': 'V1',
                     'path': dest_path,
                     'public_url': public_url,
                     'file_name': safe_rel,
