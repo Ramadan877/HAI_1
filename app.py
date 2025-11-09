@@ -641,6 +641,42 @@ def stream_submit_message_v1():
                 except Exception:
                     user_transcript = speech_to_text(audio_path)
 
+        # handling meta-questions like "Do I have to explain..." 
+        if is_meta_question(user_transcript):
+            left = attempts_left(concept_name)
+            if left > 0:
+                response_text = (
+                    f"Yes — please go through the concept of {concept_name} and explain your understanding in your own words; "
+                    f"{format_attempts_left(concept_name)}. Do your best!"
+                )
+            else:
+                response_text = (
+                    f"Thanks! You’ve already used all three tries for {concept_name}. "
+                    f"Let’s move on to the next concept."
+                )
+
+            folders = get_participant_folder(participant_id, trial_type)
+            ai_audio_filename = get_audio_filename('ai', participant_id, left or 3)
+            ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+            generate_audio(response_text, ai_audio_path)
+
+            log_interaction("User", concept_name, user_transcript)
+            log_interaction("AI", concept_name, response_text)
+            log_interaction_to_db_only("USER", concept_name, user_transcript)
+            log_interaction_to_db_only("AI", concept_name, response_text)
+
+            meta = json.dumps({
+                'ai_audio_url': ai_audio_filename,
+                'attempt_count': left,
+                'response': response_text
+            })
+            return Response(
+                stream_with_context(
+                    iter([response_text + '\n__JSON__START__' + meta + '__JSON__END__\n'])
+                ),
+                content_type='text/plain; charset=utf-8'
+            )
+
         messages = [
             {"role": "system", "content": f"Context: {concept_name}\nGolden Answer: {golden_answer}"},
             {"role": "user", "content": user_transcript}
@@ -850,27 +886,32 @@ def set_context():
     concept_name = request.form.get('concept_name')
     slide_number = request.form.get('slide_number', '0')
     logger.info(f"Setting context for concept: {concept_name}")
+    
     concepts = load_concepts()
     
-    selected_concept = next((c for c in concepts if c["name"] == concept_name), None)
-
-    if not selected_concept:
+    selected_concept_key = next(
+        (k for k in concepts.keys() if k.lower() == concept_name.lower()),
+        None
+    )
+    
+    if not selected_concept_key:
         logger.error(f"Invalid concept selection: {concept_name}")
         return jsonify({'error': 'Invalid concept selection'})
-
-    session['concept_name'] = selected_concept["name"]
-    session['golden_answer'] = selected_concept["golden_answer"]
+    
+    selected_concept = concepts[selected_concept_key]
+    session['concept_name'] = selected_concept_key
+    session['golden_answer'] = selected_concept.get("golden_answer", "")
     
     if 'concept_attempts' not in session:
         session['concept_attempts'] = {}
-    session['concept_attempts'][concept_name] = 0
+    session['concept_attempts'][selected_concept_key] = 0
     session.modified = True
 
-    log_interaction("SYSTEM", selected_concept["name"], 
-                    f"Context set for concept: {selected_concept['name']}")
+    log_interaction("SYSTEM", selected_concept_key, 
+                    f"Context set for concept: {selected_concept_key}")
 
-    logger.info(f"Context set successfully for: {selected_concept['name']}")
-    return jsonify({'message': f'Context set for {selected_concept["name"]}.'})
+    logger.info(f"Context set successfully for: {selected_concept_key}")
+    return jsonify({'message': f'Context set for {selected_concept_key}.'})
 
 @app.route('/change_concept', methods=['POST'])
 def change_concept():
@@ -1085,6 +1126,51 @@ def submit_message():
                         'status': 'error',
                         'message': 'Failed to transcribe audio'
                     }), 400
+                
+        # handling meta-questions like "Do I have to explain...?" 
+        if is_meta_question(user_transcript):
+            left = attempts_left(concept_name)
+            if left > 0:
+                response = (
+                    f"Yes — please go through the concept of {concept_name} and explain your understanding in your own words; "
+                    f"{format_attempts_left(concept_name)}. Do your best!"
+                )
+            else:
+                response = (
+                    f"Thanks! You’ve already used all three tries for {concept_name}. "
+                    f"Let’s move on to the next concept."
+                )
+
+            # Log and synthesize audio but don't increment attempts
+            if 'conversation_history' not in session:
+                session['conversation_history'] = {}
+            session['conversation_history'].setdefault(concept_name, []).extend([
+                f"User: {user_transcript}",
+                f"AI: {response}"
+            ])
+            session.modified = True
+
+            folders = get_participant_folder(participant_id, trial_type)
+            ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
+            ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+            generate_audio(response, ai_audio_path)
+
+            log_interaction("User", concept_name, user_transcript)
+            log_interaction("AI", concept_name, response)
+            log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
+            log_interaction_to_db_only("AI", concept_name, response, attempt_count)
+
+            should_move_flag = (attempts_left(concept_name) <= 0)
+
+            return jsonify({
+                'status': 'success',
+                'response': response,
+                'user_transcript': user_transcript,
+                'ai_audio_url': ai_audio_filename,
+                'attempt_count': attempt_count,
+                'should_move_to_next': should_move_flag
+            })
+
 
         def _normalize_for_check(text):
             import re
@@ -1334,6 +1420,32 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         return ai_response
     except Exception as e:
         return f"Error generating AI response: {str(e)}"
+
+# Detecting “meta-questions”
+def is_meta_question(text: str) -> bool:
+    """Return True if the user is asking how to proceed rather than explaining."""
+    if not text:
+        return False
+    t = (text or "").lower().strip()
+    if '?' in t:
+        pass
+    cues = [
+        "do i have to", "should i", "am i supposed to", "do you want me to",
+        "do you want", "do i need to", "what should i do", "how do i start",
+        "how to proceed", "what do i need", "explain the concept", "explain moderators",
+        "am i explaining", "so do i", "is this where i", "what now", "next step"
+    ]
+    return any(cue in t for cue in cues)
+
+def attempts_left(concept_name: str) -> int:
+    tries = session.get('concept_attempts', {}).get(concept_name, 0)
+    return max(0, 3 - int(tries))
+
+def format_attempts_left(concept_name: str) -> str:
+    left = attempts_left(concept_name)
+    if left <= 0:
+        return "you’ve used all your tries for this concept."
+    return f"you still have {left} {'try' if left == 1 else 'tries'} left"
 
 
 @app.route('/pdf')
