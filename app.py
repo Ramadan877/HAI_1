@@ -1269,7 +1269,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
             "Acknowledge their effort and tell them to move to the next concept."
         )
 
-    # Heuristic: only ask to repeat in English when the user's input contains
+    # Heuristic: only asking to repeat in English when the user's input contains
     # a substantial proportion of non-Latin characters. This avoids false
     # positives for accented, noisy, or partially-transcribed English.
     non_english_re = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
@@ -1281,7 +1281,6 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         English transcripts."""
         if not text or not isinstance(text, str):
             return False
-        # Short answers shouldn't be forced to repeat unless clearly non-latin
         if len(text.strip()) <= 3:
             return bool(non_english_re.search(text)) and len(non_english_re.findall(text)) >= min_non_latin
 
@@ -1293,13 +1292,30 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
             frac = 0.0
         return (non_latin_chars >= min_non_latin) and (frac >= threshold)
 
+    # Check if user's input is clearly non-English
     if detect_mostly_non_latin(user_message):
         return "Please repeat your explanation in English so I can provide feedback."
 
-    enforcement_system = (
-        "Respond only in English. "
-        "If the student's input is not in English, ask politely in English to repeat it in English."
-    )
+    # --- Language enforcement ---
+    def is_likely_english(text):
+        if not text or not str(text).strip():
+            return False
+        txt = str(text)
+        letters = [c for c in txt if c.isalpha()]
+        if not letters:
+            return bool(re.search(r'[A-Za-z]', txt))
+        total_letters = len(letters)
+        latin_letters = sum(1 for c in letters if 'a' <= c.lower() <= 'z')
+        return (latin_letters / total_letters) >= 0.6
+
+    if is_likely_english(user_message):
+        enforcement_system = "Respond only in English."
+    else:
+        enforcement_system = (
+            "Respond only in English. "
+            "If the student's input is not in English, ask politely in English to repeat it in English."
+        )
+
 
     messages = [
         {"role": "system", "content": enforcement_system},
