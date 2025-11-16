@@ -1501,9 +1501,9 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
 
 
     # === Non-English detection (robust) ===
-    non_latin = re.compile(r"[\u0590-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
+    lang = detect_language_openai(user_message)
 
-    if len(non_latin.findall(user_message)) >= 4:
+    if lang != "english":
         return "Please explain it again in English so I can give you accurate feedback."
 
 
@@ -1749,6 +1749,33 @@ def is_meta_question(text: str) -> bool:
     ]
 
     return any(c in t for c in cues)
+
+
+def detect_language_openai(text: str) -> str:
+    """
+    Uses OpenAI to detect the language of the input text.
+    Returns the language name in lowercase, e.g. 'english', 'german', 'arabic'.
+    """
+
+    if not text or not text.strip():
+        return "unknown"
+
+    try:
+        result = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Detect the language of the next user message. Answer ONLY with the language name."},
+                {"role": "user", "content": text}
+            ],
+            max_tokens=5,
+            temperature=0
+        )
+        lang = result.choices[0].message.content.strip().lower()
+        return lang
+
+    except Exception as e:
+        print("Language detection failed:", str(e))
+        return "unknown"
 
 
 def attempts_left(concept_name: str) -> int:
