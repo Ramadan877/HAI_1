@@ -1616,31 +1616,31 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
 #     except Exception as e:
 #         return f"Error generating AI response: {str(e)}"
 
-# # Detecting “meta-questions”
-# def is_meta_question(text: str) -> bool:
-#     """Return True if the user is asking how to proceed rather than explaining."""
-#     if not text:
-#         return False
-#     t = (text or "").lower().strip()
-#     if '?' in t:
-#         pass
-#     cues = [
-#         "do i have to", "should i", "am i supposed to", "do you want me to",
-#         "do you want", "do i need to", "what should i do", "how do i start",
-#         "how to proceed", "what do i need", "explain the concept", "explain moderators",
-#         "am i explaining", "so do i", "is this where i", "what now", "next step"
-#     ]
-#     return any(cue in t for cue in cues)
+# Detecting “meta-questions”
+def is_meta_question(text: str) -> bool:
+    """Return True if the user is asking how to proceed rather than explaining."""
+    if not text:
+        return False
+    t = (text or "").lower().strip()
+    if '?' in t:
+        pass
+    cues = [
+        "do i have to", "should i", "am i supposed to", "do you want me to",
+        "do you want", "do i need to", "what should i do", "how do i start",
+        "how to proceed", "what do i need", "explain the concept", "explain moderators",
+        "am i explaining", "so do i", "is this where i", "what now", "next step"
+    ]
+    return any(cue in t for cue in cues)
 
-# def attempts_left(concept_name: str) -> int:
-#     tries = session.get('concept_attempts', {}).get(concept_name, 0)
-#     return max(0, 3 - int(tries))
+def attempts_left(concept_name: str) -> int:
+    tries = session.get('concept_attempts', {}).get(concept_name, 0)
+    return max(0, 3 - int(tries))
 
-# def format_attempts_left(concept_name: str) -> str:
-#     left = attempts_left(concept_name)
-#     if left <= 0:
-#         return "you’ve used all your tries for this concept."
-#     return f"you still have {left} {'try' if left == 1 else 'tries'} left"
+def format_attempts_left(concept_name: str) -> str:
+    left = attempts_left(concept_name)
+    if left <= 0:
+        return "you’ve used all your tries for this concept."
+    return f"you still have {left} {'try' if left == 1 else 'tries'} left"
 
 
 @app.route('/pdf')
