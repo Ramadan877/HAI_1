@@ -1055,112 +1055,98 @@ def get_concept_audio(concept_name):
             'status': 'error',
             'message': str(e)
         }), 500
+    
 
 @app.route('/submit_message', methods=['POST'])
 def submit_message():
-    """Handle user message submission and generate AI response."""
+    """Handle user message submission and generate AI response (V2-style natural replies)."""
     try:
         participant_id = session.get('participant_id')
         trial_type = session.get('trial_type')
-        
+
         if not participant_id or not trial_type:
-            return jsonify({
-                'status': 'error',
-                'message': 'Participant ID or trial type not found in session'
-            }), 400
+            return jsonify({'status': 'error','message':'Participant ID or trial type not found'}), 400
 
+        # -------------------------------
+        # 1) Load concept + validate
+        # -------------------------------
         concept_name = request.form.get('concept_name', '').strip()
-        print(f"Received concept from frontend: {concept_name}")  # Debug print
-
         concepts = load_concepts()
-        print(f"Available concepts: {list(concepts.keys())}")  # Debug print
-        
-        concept_found = False
-        for concept in concepts:
-            if concept.lower() == concept_name.lower():
-                concept_name = concept  
-                concept_found = True
-                print(f"Found matching concept: {concept}")  # Debug print
-                break
 
-        if not concept_found:
-            print(f"Error: Concept '{concept_name}' not found in system!")
-            return jsonify({
-                'status': 'error',
-                'message': 'Concept not found'
-            }), 400
+        matched = next((c for c in concepts if c.lower() == concept_name.lower()), None)
+        if not matched:
+            return jsonify({'status':'error','message':'Concept not found'}), 400
 
+        concept_name = matched
         golden_answer = concepts[concept_name]['golden_answer']
-        
+
+        # -------------------------------
+        # 2) Load attempts + conversation history
+        # -------------------------------
         concept_attempts = session.get('concept_attempts', {})
         attempt_count = concept_attempts.get(concept_name, 0)
 
-        conv_store = session.get('conversation_history')
-        if conv_store is None or isinstance(conv_store, dict):
-            conversation_history = (conv_store or {}).get(concept_name, [])
-        else:
-            print(f"Warning: session['conversation_history'] has unexpected type {type(conv_store)}, resetting to dict")
-            session['conversation_history'] = {}
-            conversation_history = []
-        
+        conv_store = session.get('conversation_history', {})
+        conversation_history = conv_store.get(concept_name, [])
+
+        # -------------------------------
+        # 3) Retrieve or transcribe user message
+        # -------------------------------
+        user_transcript = request.form.get('message', '').strip()
+
         if 'audio' in request.files:
             audio_file = request.files['audio']
             if audio_file:
-                audio_filename = get_audio_filename('user', participant_id, attempt_count + 1)
                 folders = get_participant_folder(participant_id, trial_type)
+                audio_filename = get_audio_filename('user', participant_id, attempt_count + 1)
                 audio_path = os.path.join(folders['participant_folder'], audio_filename)
                 audio_file.save(audio_path)
-                
+
                 try:
-                    with open(audio_path, "rb") as audio_file:
+                    with open(audio_path, "rb") as af:
                         user_transcript = openai.Audio.transcribe(
                             model="whisper-1",
-                            file=audio_file
+                            file=af
                         )["text"]
-                except Exception as e:
-                    print(f"OpenAI transcription failed, falling back to local model: {str(e)}")
+                except Exception:
                     user_transcript = speech_to_text(audio_path)
-                
-                if not user_transcript:
-                    return jsonify({
-                        'status': 'error',
-                        'message': 'Failed to transcribe audio'
-                    }), 400
-                
-        # handling meta-questions like "Do I have to explain...?" 
+
+        if not user_transcript:
+            return jsonify({'status':'error','message':'No user message received'}), 400
+
+        # -------------------------------
+        # 4) META-QUESTION HANDLING ("Do I need to explain?")
+        # -------------------------------
         if is_meta_question(user_transcript):
             left = attempts_left(concept_name)
             if left > 0:
                 response = (
-                    f"Yes — please go through the concept of {concept_name} and explain your understanding in your own words; "
-                    f"{format_attempts_left(concept_name)}. Do your best!"
+                    f"Yes — please go through the concept of {concept_name} and "
+                    f"explain it in your own words; {format_attempts_left(concept_name)}."
                 )
             else:
                 response = (
-                    f"Thanks! You’ve already used all three tries for {concept_name}. "
-                    f"Let’s move on to the next concept."
+                    f"You’ve already used all 3 tries for {concept_name}. "
+                    f"Let’s move on to the next one."
                 )
 
-            # Log and synthesize audio but don't increment attempts
-            if 'conversation_history' not in session:
-                session['conversation_history'] = {}
-            session['conversation_history'].setdefault(concept_name, []).extend([
-                f"User: {user_transcript}",
-                f"AI: {response}"
-            ])
-            session.modified = True
-
-            folders = get_participant_folder(participant_id, trial_type)
-            ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
-            ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-            generate_audio(response, ai_audio_path)
-
+            # logging
             log_interaction("User", concept_name, user_transcript)
             log_interaction("AI", concept_name, response)
             log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
             log_interaction_to_db_only("AI", concept_name, response, attempt_count)
 
-            should_move_flag = (attempts_left(concept_name) <= 0)
+            # save audio
+            folders = get_participant_folder(participant_id, trial_type)
+            ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
+            ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+            generate_audio(response, ai_audio_path)
+
+            # update convo memory
+            conv_store.setdefault(concept_name, []).append(f"User: {user_transcript}")
+            conv_store[concept_name].append(f"AI: {response}")
+            session['conversation_history'] = conv_store
+            session.modified = True
 
             return jsonify({
                 'status': 'success',
@@ -1168,8 +1154,192 @@ def submit_message():
                 'user_transcript': user_transcript,
                 'ai_audio_url': ai_audio_filename,
                 'attempt_count': attempt_count,
-                'should_move_to_next': should_move_flag
+                'should_move_to_next': (left <= 0)
             })
+
+        # -------------------------------
+        # 5) Generate V2-style natural tutor reply
+        # -------------------------------
+        response = generate_response(
+            user_message=user_transcript,
+            concept_name=concept_name,
+            golden_answer=golden_answer,
+            attempt_count=attempt_count,
+            conversation_history=conversation_history
+        )
+
+        # -------------------------------
+        # 6) Update attempts (natural logic)
+        # -------------------------------
+        # Detect similarity early before increment
+        import re
+        from difflib import SequenceMatcher
+        def norm(t): return re.sub(r'[^a-z0-9\s]', '', (t or '').lower())
+        sim = SequenceMatcher(None, norm(user_transcript), norm(golden_answer)).ratio()
+
+        if sim >= 0.80:
+            new_attempt = 3     # mark as complete
+        else:
+            new_attempt = min(attempt_count + 1, 3)
+
+        session['concept_attempts'][concept_name] = new_attempt
+
+        # -------------------------------
+        # 7) Logging (file + DB)
+        # -------------------------------
+        log_interaction("User", concept_name, user_transcript)
+        log_interaction("AI", concept_name, response)
+        log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count + 1)
+        log_interaction_to_db_only("AI", concept_name, response, attempt_count + 1)
+
+        # -------------------------------
+        # 8) Save AI audio
+        # -------------------------------
+        folders = get_participant_folder(participant_id, trial_type)
+        ai_audio_filename = get_audio_filename('ai', participant_id, new_attempt)
+        ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+        generate_audio(response, ai_audio_path)
+
+        # -------------------------------
+        # 9) Update conversation history
+        # -------------------------------
+        conv_store.setdefault(concept_name, []).append(f"User: {user_transcript}")
+        conv_store[concept_name].append(f"AI: {response}")
+        session['conversation_history'] = conv_store
+        session.modified = True
+
+        # -------------------------------
+        # 10) Return result
+        # -------------------------------
+        return jsonify({
+            'status': 'success',
+            'response': response,
+            'user_transcript': user_transcript,
+            'ai_audio_url': ai_audio_filename,
+            'attempt_count': new_attempt,
+            'should_move_to_next': (new_attempt >= 3)
+        })
+
+    except Exception as e:
+        print(f"Error in submit_message: {str(e)}")
+        return jsonify({'status':'error','message':str(e)}), 500
+
+
+# @app.route('/submit_message', methods=['POST'])
+# def submit_message():
+#     """Handle user message submission and generate AI response."""
+#     try:
+#         participant_id = session.get('participant_id')
+#         trial_type = session.get('trial_type')
+        
+#         if not participant_id or not trial_type:
+#             return jsonify({
+#                 'status': 'error',
+#                 'message': 'Participant ID or trial type not found in session'
+#             }), 400
+
+#         concept_name = request.form.get('concept_name', '').strip()
+#         print(f"Received concept from frontend: {concept_name}")  # Debug print
+
+#         concepts = load_concepts()
+#         print(f"Available concepts: {list(concepts.keys())}")  # Debug print
+        
+#         concept_found = False
+#         for concept in concepts:
+#             if concept.lower() == concept_name.lower():
+#                 concept_name = concept  
+#                 concept_found = True
+#                 print(f"Found matching concept: {concept}")  # Debug print
+#                 break
+
+#         if not concept_found:
+#             print(f"Error: Concept '{concept_name}' not found in system!")
+#             return jsonify({
+#                 'status': 'error',
+#                 'message': 'Concept not found'
+#             }), 400
+
+#         golden_answer = concepts[concept_name]['golden_answer']
+        
+#         concept_attempts = session.get('concept_attempts', {})
+#         attempt_count = concept_attempts.get(concept_name, 0)
+
+#         conv_store = session.get('conversation_history')
+#         if conv_store is None or isinstance(conv_store, dict):
+#             conversation_history = (conv_store or {}).get(concept_name, [])
+#         else:
+#             print(f"Warning: session['conversation_history'] has unexpected type {type(conv_store)}, resetting to dict")
+#             session['conversation_history'] = {}
+#             conversation_history = []
+        
+#         if 'audio' in request.files:
+#             audio_file = request.files['audio']
+#             if audio_file:
+#                 audio_filename = get_audio_filename('user', participant_id, attempt_count + 1)
+#                 folders = get_participant_folder(participant_id, trial_type)
+#                 audio_path = os.path.join(folders['participant_folder'], audio_filename)
+#                 audio_file.save(audio_path)
+                
+#                 try:
+#                     with open(audio_path, "rb") as audio_file:
+#                         user_transcript = openai.Audio.transcribe(
+#                             model="whisper-1",
+#                             file=audio_file
+#                         )["text"]
+#                 except Exception as e:
+#                     print(f"OpenAI transcription failed, falling back to local model: {str(e)}")
+#                     user_transcript = speech_to_text(audio_path)
+                
+#                 if not user_transcript:
+#                     return jsonify({
+#                         'status': 'error',
+#                         'message': 'Failed to transcribe audio'
+#                     }), 400
+                
+#         handling meta-questions like "Do I have to explain...?" 
+#         if is_meta_question(user_transcript):
+#             left = attempts_left(concept_name)
+#             if left > 0:
+#                 response = (
+#                     f"Yes — please go through the concept of {concept_name} and explain your understanding in your own words; "
+#                     f"{format_attempts_left(concept_name)}. Do your best!"
+#                 )
+#             else:
+#                 response = (
+#                     f"Thanks! You’ve already used all three tries for {concept_name}. "
+#                     f"Let’s move on to the next concept."
+#                 )
+            
+#             # Log and synthesize audio but don't increment attempts
+#             if 'conversation_history' not in session:
+#                 session['conversation_history'] = {}
+#             session['conversation_history'].setdefault(concept_name, []).extend([
+#                 f"User: {user_transcript}",
+#                 f"AI: {response}"
+#             ])
+#             session.modified = True
+
+#             folders = get_participant_folder(participant_id, trial_type)
+#             ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
+#             ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+#             generate_audio(response, ai_audio_path)
+
+#             log_interaction("User", concept_name, user_transcript)
+#             log_interaction("AI", concept_name, response)
+#             log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
+#             log_interaction_to_db_only("AI", concept_name, response, attempt_count)
+
+#             should_move_flag = (attempts_left(concept_name) <= 0)
+
+#             return jsonify({
+#                 'status': 'success',
+#                 'response': response,
+#                 'user_transcript': user_transcript,
+#                 'ai_audio_url': ai_audio_filename,
+#                 'attempt_count': attempt_count,
+#                 'should_move_to_next': should_move_flag
+#             })
+
 
 
         def _normalize_for_check(text):
