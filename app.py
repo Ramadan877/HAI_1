@@ -1258,197 +1258,130 @@ def submit_message():
 
 
 def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
-    """Generate tutor feedback with:
-    - conversational handling of meta/non-explanation messages
-    - English detection
-    - similarity scoring
-    - attempt-aware feedback logic
-    """
+    """V1-style natural tutor — conversational, flexible, attempt-aware."""
 
     import re
     import openai
+    from difflib import SequenceMatcher
 
-    # === 0. Safety guard ===
+    # === Safety ===
     if not golden_answer or not concept_name:
         return (
-            "I can’t provide feedback yet because the concept context isn’t set. "
-            "Please make sure both the concept and golden answer are defined."
+            "I can’t give feedback yet because the concept context isn’t set. "
+            "Please make sure the concept is selected."
         )
 
-    # === 1. Conversation History ===
+    # === Conversation history ===
     history_context = ""
-    if conversation_history and len(conversation_history) > 0:
-        history_context = "\nRecent conversation:\n" + "\n".join(conversation_history[-3:])
+    if conversation_history:
+        history_context = "\nRecent dialogue:\n" + "\n".join(conversation_history[-3:])
 
 
-    # === 2. Helper functions ===
-    def normalize(text):
-        return re.sub(r'[^a-z0-9\s]', '', (text or '').lower().strip())
+    # === Normalize for similarity ===
+    def normalize(t):
+        return re.sub(r'[^a-z0-9\s]', '', (t or '').lower().strip())
 
-    user_norm = normalize(user_message)
-    golden_norm = normalize(golden_answer)
+    u = normalize(user_message)
+    g = normalize(golden_answer)
 
     try:
-        char_ratio = SequenceMatcher(None, user_norm, golden_norm).ratio()
-    except Exception:
-        char_ratio = 0.0
-
-    def word_jaccard(a, b):
-        a_set = set(a.split())
-        b_set = set(b.split())
-        if not a_set and not b_set:
-            return 0.0
-        try:
-            return len(a_set & b_set) / len(a_set | b_set)
-        except Exception:
-            return 0.0
-
-    word_ratio = word_jaccard(user_norm, golden_norm)
-    similarity = max(char_ratio, word_ratio)
+        sim = SequenceMatcher(None, u, g).ratio()
+    except:
+        sim = 0.0
 
 
-    # === 3. NEW: classify messages that are NOT explanation attempts ===
-    def is_non_explanation(msg: str) -> bool:
+    # === Detect messages that are NOT explanations ===
+    def is_non_explanation(msg):
         if not msg or not msg.strip():
             return True
 
-        m = msg.strip().lower()
+        t = msg.strip().lower()
 
-        # Clear questions
-        if m.endswith("?"):
-            return True
-
-        meta = {
-            "next", "go on", "continue", "should i start", "i'm done",
-            "bye", "can we move on", "move on",
-            "can we continue", "start", "okay what now"
+        # Clear meta / procedural messages
+        simple_meta = {
+            "ok", "okay", "yes", "no", "idk", "i don't know",
+            "next", "continue", "go on", "i'm done",
+            "can we move on", "should i start", "start"
         }
-        if m in meta:
+        if t in simple_meta:
             return True
 
-        # Very short confirmations
-        if m in {"ok", "okay", "yes", "no", "i don't know", "idk"}:
+        if t.endswith("?"):
             return True
 
-        # “Do I have to…?” type not covered by is_meta_question()
-        if m.startswith("do i") or m.startswith("should i"):
+        if t.startswith("do i") or t.startswith("should i"):
             return True
 
         return False
 
 
-    # === 4. If student message is NOT an explanation → produce natural tutor reply ===
+    # === If message isn't an explanation ===
     if is_non_explanation(user_message):
         return (
-            f"Yes — you're on the right track. "
-            f"Please explain the concept of {concept_name} in your own words so I can guide you."
+            f"Sure — please explain the concept of {concept_name} in your own words so I can guide you."
         )
 
 
-    # === 5. Early accept if extremely similar ===
-    if similarity >= 0.8:
-        if attempt_count >= 2:
-            return f"{golden_answer} You’re correct. You can now move on to the next concept."
-
+    # === Accept early if highly similar ===
+    if sim >= 0.80:
         return (
-            "Excellent — your explanation is clear and accurate. "
-            "You’ve captured the main idea correctly. You can now move on to the next concept."
+            "Great — your explanation captures the essential idea. "
+            "You can now move on to the next concept."
         )
 
 
-    # === 6. English detection ===
-    non_english_re = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
+    # === Non-English detection (robust) ===
+    non_latin = re.compile(r"[\u0590-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
 
-    def detect_mostly_non_latin(text, threshold=0.35, min_non_latin=3):
-        if not text or not isinstance(text, str):
-            return False
-        if len(text.strip()) <= 3:
-            return bool(non_english_re.search(text)) and len(non_english_re.findall(text)) >= min_non_latin
-        total = len(text)
-        non_latin = len(non_english_re.findall(text))
-        frac = non_latin / total if total else 0
-        return (non_latin >= min_non_latin) and (frac >= threshold)
-
-    if detect_mostly_non_latin(user_message):
-        return "Please repeat your explanation in English so I can provide feedback."
+    if len(non_latin.findall(user_message)) >= 4:
+        return "Please explain it again in English so I can give you accurate feedback."
 
 
-    # === 7. English likelihood heuristic ===
-    def is_likely_english(text):
-        if not text or not str(text).strip():
-            return False
-        txt = str(text)
-        letters = [c for c in txt if c.isalpha()]
-        if not letters:
-            return bool(re.search(r"[A-Za-z]", txt))
-        total_letters = len(letters)
-        latin_letters = sum(1 for c in letters if "a" <= c.lower() <= "z")
-        return (latin_letters / total_letters) >= 0.6
+    # === System persona ===
+    persona = f"""
+You are a warm, concise tutor.
+Concept: {concept_name}
+Golden Answer: {golden_answer}
+Student Explanation: {user_message}
+{history_context}
 
-    if is_likely_english(user_message):
-        enforcement_system = "Respond only in English."
-    else:
-        enforcement_system = (
-            "Respond only in English. "
-            "If the student's input is not in English, ask politely in English to repeat it in English."
-        )
+Rules:
+- Respond in plain English.
+- Max 3 short sentences.
+- Be supportive but not chatty.
+- NEVER reveal the golden answer before the 3rd attempt.
+- On attempt 3: if still incorrect, you MAY reveal the correct idea and tell them to move on.
+"""
 
-
-    # === 8. System instruction (tutor persona) ===
-    base_prompt = f"""
-    Context: {concept_name}
-    Golden Answer: {golden_answer}
-    Student Explanation: {user_message}
-    {history_context}
-
-    You are a concise, friendly tutor guiding the student.
-    - Keep responses under 3 sentences.
-    - Be supportive, warm, but not overly enthusiastic.
-    - Never reveal the golden answer before the third attempt.
-    - Correct on attempt 3 if still wrong.
-    - Give one hint only when needed.
-    """
-
-
-    # === 9. Attempt-level instructions ===
+    # === Attempt level instructions ===
     if attempt_count == 0:
-        user_prompt = (
-            "This is the FIRST attempt. Provide general feedback and one broad hint."
-        )
+        style = "This is the 1st attempt. Give general feedback and one gentle hint."
     elif attempt_count == 1:
-        user_prompt = (
-            "This is the SECOND attempt. Identify what is missing but DO NOT reveal "
-            "the correct answer. Encourage one more try."
-        )
+        style = "This is the 2nd attempt. Point out what's missing but do NOT reveal the correct answer. Encourage one more try."
     elif attempt_count == 2:
-        user_prompt = (
-            "This is the THIRD and FINAL attempt. If correct, confirm. "
-            "If incorrect, briefly provide the correct explanation and tell them to move on."
+        style = (
+            "This is the 3rd attempt. If correct, confirm. "
+            "If still incorrect, briefly provide the correct idea and instruct them to move on."
         )
     else:
-        user_prompt = (
-            "The student has already completed three attempts. "
-            "Acknowledge their effort and tell them to move on."
-        )
+        return "You've already completed your three attempts — please continue to the next concept."
 
 
-    # === 10. OpenAI call ===
-    messages = [
-        {"role": "system", "content": enforcement_system},
-        {"role": "system", "content": base_prompt},
-        {"role": "user",  "content": user_prompt},
-    ]
-
+    # === Call the model ===
     try:
-        response = openai.ChatCompletion.create(
+        completion = openai.ChatCompletion.create(
             model="gpt-4o-mini",
-            messages=messages,
+            messages=[
+                {"role": "system", "content": persona},
+                {"role": "user", "content": style}
+            ],
             max_tokens=120,
-            temperature=0.4,
+            temperature=0.4
         )
-        return response.choices[0].message.content.strip()
+        return completion.choices[0].message.content.strip()
+
     except Exception as e:
-        return f"Error generating AI response: {str(e)}"
+        return f"Error generating feedback: {str(e)}"
 
 
 # def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
@@ -1617,20 +1550,36 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
 #         return f"Error generating AI response: {str(e)}"
 
 # Detecting “meta-questions”
+# def is_meta_question(text: str) -> bool:
+#     """Return True if the user is asking how to proceed rather than explaining."""
+#     if not text:
+#         return False
+#     t = (text or "").lower().strip()
+#     if '?' in t:
+#         pass
+#     cues = [
+#         "do i have to", "should i", "am i supposed to", "do you want me to",
+#         "do you want", "do i need to", "what should i do", "how do i start",
+#         "how to proceed", "what do i need", "explain the concept", "explain moderators",
+#         "am i explaining", "so do i", "is this where i", "what now", "next step"
+#     ]
+#     return any(cue in t for cue in cues)
+
+
 def is_meta_question(text: str) -> bool:
-    """Return True if the user is asking how to proceed rather than explaining."""
     if not text:
         return False
-    t = (text or "").lower().strip()
-    if '?' in t:
-        pass
+    t = text.lower().strip()
+
     cues = [
-        "do i have to", "should i", "am i supposed to", "do you want me to",
-        "do you want", "do i need to", "what should i do", "how do i start",
-        "how to proceed", "what do i need", "explain the concept", "explain moderators",
-        "am i explaining", "so do i", "is this where i", "what now", "next step"
+        "do i have to", "should i", "am i supposed to",
+        "do you want me to", "what should i do",
+        "how do i start", "how to proceed",
+        "next step", "what now"
     ]
-    return any(cue in t for cue in cues)
+
+    return any(c in t for c in cues)
+
 
 def attempts_left(concept_name: str) -> int:
     tries = session.get('concept_attempts', {}).get(concept_name, 0)
