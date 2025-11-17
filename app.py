@@ -601,154 +601,313 @@ def synthesize_with_openai(text, voice='alloy', fmt='mp3'):
     return audio_bytes, content_type
 
 
-@app.route('/stream_submit_message', methods=['POST'])
+@app.route('/stream_submit_message_v1', methods=['POST'])
 def stream_submit_message_v1():
-    """Streaming variant for V1: streams partial text tokens to the client."""
+    """Streaming version of the tutor response using the full V2 logic."""
     try:
         participant_id = session.get('participant_id')
         trial_type = session.get('trial_type')
+
         if not participant_id or not trial_type:
-            return jsonify({'status': 'error', 'message': 'Participant ID or trial type not found in session'}), 400
+            return "Session error: Missing participant or trial type.", 400
 
         concept_name = request.form.get('concept_name', '').strip()
         concepts = load_concepts()
 
-        concept_found = False
-        for concept in concepts:
-            if concept.lower() == concept_name.lower():
-                concept_name = concept
-                concept_found = True
-                break
+        matched = next((c for c in concepts if c.lower() == concept_name.lower()), None)
+        if not matched:
+            return "Concept not found", 400
 
-        if not concept_found:
-            return jsonify({'status': 'error', 'message': 'Concept not found'}), 400
-
+        concept_name = matched
         golden_answer = concepts[concept_name]['golden_answer']
 
-        user_transcript = ''
-        user_transcript = request.form.get('message', '')
+        # Attempts + history
+        concept_attempts = session.get('concept_attempts', {})
+        attempt_count = concept_attempts.get(concept_name, 0)
 
+        conv_store = session.get('conversation_history', {})
+        conversation_history = conv_store.get(concept_name, [])
+
+        # Get transcript
+        user_transcript = request.form.get('message', '').strip()
+        if not user_transcript and 'audio' not in request.files:
+            return "No input detected", 400
+
+        # Audio transcription
         if 'audio' in request.files:
             audio_file = request.files['audio']
             if audio_file:
                 folders = get_participant_folder(participant_id, trial_type)
-                audio_filename = get_audio_filename('user', participant_id, 1)
+                audio_filename = get_audio_filename('user', participant_id, attempt_count + 1)
                 audio_path = os.path.join(folders['participant_folder'], audio_filename)
                 audio_file.save(audio_path)
+
                 try:
-                    with open(audio_path, 'rb') as f:
-                        user_transcript = openai.Audio.transcribe(model='whisper-1', file=f)['text']
-                except Exception:
+                    with open(audio_path, "rb") as af:
+                        user_transcript = openai.Audio.transcribe(
+                            model="whisper-1",
+                            file=af
+                        )["text"]
+                except:
                     user_transcript = speech_to_text(audio_path)
 
-        # handling meta-questions like "Do I have to explain..." 
+        if not user_transcript:
+            return "Failed to transcribe message.", 400
+
+        # ----------------------------------------------
+        # META-QUESTION HANDLING (same as submit_message)
+        # ----------------------------------------------
         if is_meta_question(user_transcript):
             left = attempts_left(concept_name)
             if left > 0:
                 response_text = (
-                    f"Yes — please go through the concept of {concept_name} and explain your understanding in your own words; "
-                    f"{format_attempts_left(concept_name)}. Do your best!"
+                    f"Yes — please go through the concept of {concept_name} and "
+                    f"explain it in your own words; {format_attempts_left(concept_name)}."
                 )
             else:
                 response_text = (
-                    f"Thanks! You’ve already used all three tries for {concept_name}. "
-                    f"Let’s move on to the next concept."
+                    f"You’ve already used all 3 tries for {concept_name}. "
+                    f"Let’s move on to the next one."
                 )
 
+            # Logging
+            log_interaction("User", concept_name, user_transcript)
+            log_interaction("AI", concept_name, response_text)
+            log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
+            log_interaction_to_db_only("AI", concept_name, response_text, attempt_count)
+
+            # Audio
             folders = get_participant_folder(participant_id, trial_type)
-            ai_audio_filename = get_audio_filename('ai', participant_id, left or 3)
+            ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
             ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
             generate_audio(response_text, ai_audio_path)
 
-            log_interaction("User", concept_name, user_transcript)
-            log_interaction("AI", concept_name, response_text)
-            log_interaction_to_db_only("USER", concept_name, user_transcript)
-            log_interaction_to_db_only("AI", concept_name, response_text)
-
             meta = json.dumps({
                 'ai_audio_url': ai_audio_filename,
-                'attempt_count': left,
+                'attempt_count': attempt_count,
                 'response': response_text
             })
-            return Response(
-                stream_with_context(
-                    iter([response_text + '\n__JSON__START__' + meta + '__JSON__END__\n'])
-                ),
-                content_type='text/plain; charset=utf-8'
-            )
 
-        messages = [
-            {"role": "system", "content": f"Context: {concept_name}\nGolden Answer: {golden_answer}"},
-            {"role": "user", "content": user_transcript}
-        ]
+            def generate():
+                yield response_text
+                yield "\n__JSON__START__" + meta + "__JSON__END__\n"
+
+            return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
+
+        # ----------------------------------------------
+        # USE YOUR TUTOR LOGIC (V2 ENGINE)
+        # ----------------------------------------------
+        response_text = generate_response(
+            user_message=user_transcript,
+            concept_name=concept_name,
+            golden_answer=golden_answer,
+            attempt_count=attempt_count,
+            conversation_history=conversation_history
+        )
+
+        # ----------------------------------------------
+        # ATTEMPT LOGIC (same as submit_message)
+        # ----------------------------------------------
+        import re
+        from difflib import SequenceMatcher
+
+        def norm(t):
+            return re.sub(r'[^a-z0-9\s]', '', (t or '').lower())
+
+        sim = SequenceMatcher(None, norm(user_transcript), norm(golden_answer)).ratio()
+
+        if sim >= 0.80:
+            new_attempt = 3
+        else:
+            new_attempt = min(attempt_count + 1, 3)
+
+        session['concept_attempts'][concept_name] = new_attempt
+        session.modified = True
+
+        # ----------------------------------------------
+        # LOGGING (file + DB)
+        # ----------------------------------------------
+        log_interaction("User", concept_name, user_transcript)
+        log_interaction("AI", concept_name, response_text)
+        log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
+        log_interaction_to_db_only("AI", concept_name, response_text, new_attempt)
+
+        # ----------------------------------------------
+        # AUDIO GENERATION
+        # ----------------------------------------------
+        folders = get_participant_folder(participant_id, trial_type)
+        ai_audio_filename = get_audio_filename('ai', participant_id, new_attempt)
+        ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+        generate_audio(response_text, ai_audio_path)
+
+        # ----------------------------------------------
+        # STREAM TO FRONTEND
+        # ----------------------------------------------
+        meta = json.dumps({
+            'ai_audio_url': ai_audio_filename,
+            'attempt_count': new_attempt,
+            'response': response_text
+        })
 
         def generate():
-            try:
-                stream_resp = openai.ChatCompletion.create(
-                    model='gpt-4o-mini',
-                    messages=messages,
-                    max_tokens=80,
-                    temperature=0.4,
-                    stream=True
-                )
-
-                final_text = ''
-                for event in stream_resp:
-                    token = ''
-                    try:
-                        if isinstance(event, dict) and 'choices' in event:
-                            ch = event['choices'][0]
-                            if 'delta' in ch:
-                                token = ch['delta'].get('content', '')
-                            elif 'text' in ch:
-                                token = ch.get('text', '')
-                    except Exception:
-                        token = ''
-
-                    if token:
-                        final_text += token
-                        yield token
-
-                try:
-                    concept_attempts = session.get('concept_attempts', {})
-                    attempt_count = concept_attempts.get(concept_name, 0)
-                    attempt_count += 1
-                    concept_attempts[concept_name] = attempt_count
-                    session['concept_attempts'] = concept_attempts
-
-                    folders = get_participant_folder(participant_id, trial_type)
-                    ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
-                    ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-
-                    generated = False
-                    try:
-                        generated = generate_audio(final_text, ai_audio_path)
-                    except Exception as e:
-                        print('Audio generation error after streaming:', str(e))
-
-                    try:
-                        session_id = session.get('session_id')
-                        if session_id and os.path.exists(ai_audio_path):
-                            with open(ai_audio_path, 'rb') as f:
-                                ai_audio_data = f.read()
-                            save_audio_with_cloud_backup(ai_audio_data, ai_audio_filename, session_id, 'ai_audio', concept_name, attempt_count)
-                    except Exception as e:
-                        print('Failed to backup AI audio:', str(e))
-
-                    meta = json.dumps({
-                        'ai_audio_url': ai_audio_filename,
-                        'attempt_count': attempt_count,
-                        'response': final_text
-                    })
-                    yield '\n__JSON__START__' + meta + '__JSON__END__\n'
-                except Exception as e:
-                    yield f"\n[error-postprocess] {str(e)}\n"
-            except Exception as e:
-                yield f"[error] {str(e)}"
+            yield response_text
+            yield "\n__JSON__START__" + meta + "__JSON__END__\n"
 
         return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
+
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        print("Error in stream_submit_message_v1:", str(e))
+        return f"Error: {str(e)}", 500
+
+
+# @app.route('/stream_submit_message', methods=['POST'])
+# def stream_submit_message_v1():
+#     """Streaming variant for V1: streams partial text tokens to the client."""
+#     try:
+#         participant_id = session.get('participant_id')
+#         trial_type = session.get('trial_type')
+#         if not participant_id or not trial_type:
+#             return jsonify({'status': 'error', 'message': 'Participant ID or trial type not found in session'}), 400
+
+#         concept_name = request.form.get('concept_name', '').strip()
+#         concepts = load_concepts()
+
+#         concept_found = False
+#         for concept in concepts:
+#             if concept.lower() == concept_name.lower():
+#                 concept_name = concept
+#                 concept_found = True
+#                 break
+
+#         if not concept_found:
+#             return jsonify({'status': 'error', 'message': 'Concept not found'}), 400
+
+#         golden_answer = concepts[concept_name]['golden_answer']
+
+#         user_transcript = ''
+#         user_transcript = request.form.get('message', '')
+
+#         if 'audio' in request.files:
+#             audio_file = request.files['audio']
+#             if audio_file:
+#                 folders = get_participant_folder(participant_id, trial_type)
+#                 audio_filename = get_audio_filename('user', participant_id, 1)
+#                 audio_path = os.path.join(folders['participant_folder'], audio_filename)
+#                 audio_file.save(audio_path)
+#                 try:
+#                     with open(audio_path, 'rb') as f:
+#                         user_transcript = openai.Audio.transcribe(model='whisper-1', file=f)['text']
+#                 except Exception:
+#                     user_transcript = speech_to_text(audio_path)
+
+#         # handling meta-questions like "Do I have to explain..." 
+#         if is_meta_question(user_transcript):
+#             left = attempts_left(concept_name)
+#             if left > 0:
+#                 response_text = (
+#                     f"Yes — please go through the concept of {concept_name} and explain your understanding in your own words; "
+#                     f"{format_attempts_left(concept_name)}. Do your best!"
+#                 )
+#             else:
+#                 response_text = (
+#                     f"Thanks! You’ve already used all three tries for {concept_name}. "
+#                     f"Let’s move on to the next concept."
+#                 )
+
+#             folders = get_participant_folder(participant_id, trial_type)
+#             ai_audio_filename = get_audio_filename('ai', participant_id, left or 3)
+#             ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+#             generate_audio(response_text, ai_audio_path)
+
+#             log_interaction("User", concept_name, user_transcript)
+#             log_interaction("AI", concept_name, response_text)
+#             log_interaction_to_db_only("USER", concept_name, user_transcript)
+#             log_interaction_to_db_only("AI", concept_name, response_text)
+
+#             meta = json.dumps({
+#                 'ai_audio_url': ai_audio_filename,
+#                 'attempt_count': left,
+#                 'response': response_text
+#             })
+#             return Response(
+#                 stream_with_context(
+#                     iter([response_text + '\n__JSON__START__' + meta + '__JSON__END__\n'])
+#                 ),
+#                 content_type='text/plain; charset=utf-8'
+#             )
+
+#         messages = [
+#             {"role": "system", "content": f"Context: {concept_name}\nGolden Answer: {golden_answer}"},
+#             {"role": "user", "content": user_transcript}
+#         ]
+
+#         def generate():
+#             try:
+#                 stream_resp = openai.ChatCompletion.create(
+#                     model='gpt-4o-mini',
+#                     messages=messages,
+#                     max_tokens=80,
+#                     temperature=0.4,
+#                     stream=True
+#                 )
+
+#                 final_text = ''
+#                 for event in stream_resp:
+#                     token = ''
+#                     try:
+#                         if isinstance(event, dict) and 'choices' in event:
+#                             ch = event['choices'][0]
+#                             if 'delta' in ch:
+#                                 token = ch['delta'].get('content', '')
+#                             elif 'text' in ch:
+#                                 token = ch.get('text', '')
+#                     except Exception:
+#                         token = ''
+
+#                     if token:
+#                         final_text += token
+#                         yield token
+
+#                 try:
+#                     concept_attempts = session.get('concept_attempts', {})
+#                     attempt_count = concept_attempts.get(concept_name, 0)
+#                     attempt_count += 1
+#                     concept_attempts[concept_name] = attempt_count
+#                     session['concept_attempts'] = concept_attempts
+
+#                     folders = get_participant_folder(participant_id, trial_type)
+#                     ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
+#                     ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+
+#                     generated = False
+#                     try:
+#                         generated = generate_audio(final_text, ai_audio_path)
+#                     except Exception as e:
+#                         print('Audio generation error after streaming:', str(e))
+
+#                     try:
+#                         session_id = session.get('session_id')
+#                         if session_id and os.path.exists(ai_audio_path):
+#                             with open(ai_audio_path, 'rb') as f:
+#                                 ai_audio_data = f.read()
+#                             save_audio_with_cloud_backup(ai_audio_data, ai_audio_filename, session_id, 'ai_audio', concept_name, attempt_count)
+#                     except Exception as e:
+#                         print('Failed to backup AI audio:', str(e))
+
+#                     meta = json.dumps({
+#                         'ai_audio_url': ai_audio_filename,
+#                         'attempt_count': attempt_count,
+#                         'response': final_text
+#                     })
+#                     yield '\n__JSON__START__' + meta + '__JSON__END__\n'
+#                 except Exception as e:
+#                     yield f"\n[error-postprocess] {str(e)}\n"
+#             except Exception as e:
+#                 yield f"[error] {str(e)}"
+
+#         return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
+#     except Exception as e:
+#         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 def ssml_wrap(text, rate='0%', pitch='0%', break_ms=250):
