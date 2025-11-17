@@ -1587,130 +1587,255 @@ def submit_message():
 
 
 def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
-    """V1-style natural tutor — conversational, flexible, attempt-aware."""
+    """
+    Unified tutoring logic combining:
+    - V2 pipeline structure (filler, English check, heuristics, then GPT)
+    - V1 interaction design (no fake praise, attempt-aware guidance, confusion/off-topic handling)
+    """
 
     import re
     import openai
     from difflib import SequenceMatcher
 
-    # === Safety ===
+    # -------------------------------------------------
+    # 0. Basic validation
+    # -------------------------------------------------
     if not golden_answer or not concept_name:
         return (
-            "I can’t give feedback yet because the concept context isn’t set. "
-            "Please make sure the concept is selected."
+            "I can’t provide feedback yet because the concept context isn’t set. "
+            "Please make sure both the concept and golden answer are defined."
         )
 
-    # === Conversation history ===
-    history_context = ""
-    if conversation_history:
-        history_context = "\nRecent dialogue:\n" + "\n".join(conversation_history[-3:])
-
-
-    # === Normalize for similarity ===
-    def normalize(t):
-        return re.sub(r'[^a-z0-9\s]', '', (t or '').lower().strip())
-
-    u = normalize(user_message)
-    g = normalize(golden_answer)
-
-    try:
-        sim = SequenceMatcher(None, u, g).ratio()
-    except:
-        sim = 0.0
-
-
-    # === Detect messages that are NOT explanations ===
-    def is_non_explanation(msg):
-        if not msg or not msg.strip():
+    # -------------------------------------------------
+    # 1. Filler / unclear message detection (KEEP OLD LOGIC)
+    # -------------------------------------------------
+    def is_filler(s):
+        if not s or not str(s).strip():
             return True
-
-        t = msg.strip().lower()
-
-        # Clear meta / procedural messages
-        simple_meta = {
-            "ok", "okay", "yes", "no", "idk", "i don't know",
-            "next", "continue", "go on", "i'm done",
-            "can we move on", "should i start", "start"
+        s2 = str(s).strip().lower()
+        fillers = {
+            'ok','okay','yes','no','mm','mmm','hmm','uh','uhh','fine','sure',
+            'i dont know','idk','not sure'
         }
-        if t in simple_meta:
+        if s2 in fillers:
             return True
-
-        if t.endswith("?"):
+        if len(s2) < 3:
             return True
-
-        if t.startswith("do i") or t.startswith("should i"):
+        if re.match(r'^[\.\,\-\s]+$', s2):
             return True
-
         return False
 
-
-    # === If message isn't an explanation ===
-    if is_non_explanation(user_message):
+    if is_filler(user_message):
+        # On last attempt, just give the golden answer and move on
+        if attempt_count >= 2:
+            return f"{golden_answer} You can now move on to the next concept."
+        # Otherwise ask for a fuller explanation
         return (
-            f"Sure — please explain the concept of {concept_name} in your own words so I can guide you."
+            f"I couldn’t quite understand your explanation — it was too brief. "
+            f"Please try explaining {concept_name} in complete sentences."
         )
 
+    # -------------------------------------------------
+    # 2. English detection (V2 logic + V1 strictness)
+    # -------------------------------------------------
+    def is_likely_english(text):
+        if not text or not str(text).strip():
+            return False
+        txt = str(text)
+        letters = [c for c in txt if c.isalpha()]
+        if not letters:
+            # fallback for numbers/punctuation
+            return bool(re.search(r'[A-Za-z]', txt))
+        total_letters = len(letters)
+        latin_letters = sum(1 for c in letters if 'a' <= c.lower() <= 'z')
+        return (latin_letters / total_letters) >= 0.6
 
-    # === Accept early if highly similar ===
-    if sim >= 0.80:
+    # Quick heuristic first
+    if not is_likely_english(user_message):
+        # Optional: you could fall back to detect_language_openai here if you want
+        # lang = detect_language_openai(user_message)
+        # if lang != "english" and lang != "unknown":
+        return "Please repeat your explanation in English so I can give feedback."
+
+    # -------------------------------------------------
+    # 3. Heuristic correctness check (KEEP OLD LOGIC)
+    # -------------------------------------------------
+    def normalize(text):
+        return re.sub(r'[^a-z0-9\s]', '', text.lower().strip())
+
+    user_norm = normalize(user_message)
+    golden_norm = normalize(golden_answer)
+
+    # Character-based similarity
+    similarity = SequenceMatcher(
+        None,
+        user_norm,
+        golden_norm
+    ).ratio()
+
+    # Token overlap
+    def token_overlap(a, b):
+        toks_a = a.split()
+        toks_b = b.split()
+        if not toks_a or not toks_b:
+            return 0
+        set_a = set(toks_a)
+        set_b = set(toks_b)
+        return len(set_a & set_b) / max(1, len(set_a))
+
+    overlap = token_overlap(user_norm, golden_norm)
+
+    # Simple bucket for similarity to feed into GPT
+    if similarity >= 0.8:
+        similarity_bucket = "high"
+    elif similarity >= 0.5:
+        similarity_bucket = "medium"
+    elif similarity >= 0.25:
+        similarity_bucket = "low"
+    else:
+        similarity_bucket = "very_low"
+
+    # correlation keyword heuristic (special case for your concepts)
+    kw = user_message.lower()
+    has_corr = 'correlation' in kw or 'correlat' in kw
+    has_nums = any(n in kw for n in ['-1', '1', '0', 'negative', 'positive'])
+    mentions_causation = 'caus' in kw
+
+    heuristically_correct = (
+        similarity >= 0.78
+        or overlap >= 0.5
+        or (has_corr and (has_nums or mentions_causation))
+    )
+
+    # -------------------------------------------------
+    # 4. If heuristically correct BEFORE GPT → accept it
+    # -------------------------------------------------
+    if heuristically_correct:
+        # On 3rd attempt (attempt_count >= 2), you allow revealing the golden answer
+        if attempt_count >= 2:
+            return f"{golden_answer} You’re correct. You can now move on to the next concept."
+        # Earlier attempts: confirm and tell them to move on
         return (
-            "Great — your explanation captures the essential idea. "
-            "You can now move on to the next concept."
+            "Great job — your explanation captures the essential meaning. "
+            "You can move on to the next concept."
         )
 
+    # -------------------------------------------------
+    # 5. Build conversation context for natural GPT response
+    # -------------------------------------------------
+    history_block = ""
+    if conversation_history:
+        history_block = "\n".join(conversation_history[-6:])
 
-    # === Non-English detection (robust) ===
-    lang = detect_language_openai(user_message)
+    # -------------------------------------------------
+    # 6. NATURAL TUTOR SYSTEM PROMPT (V2 STRUCTURE + V1 BEHAVIOR)
+    # -------------------------------------------------
+    system_prompt = f"""
+You are a tutoring agent in a self-explanation exercise on research methods.
 
-    if lang != "english":
-        return "Please explain it again in English so I can give you accurate feedback."
+The student is working on this concept:
+- Concept name: {concept_name}
 
+Target expert explanation ("golden answer"):
+- Golden answer: {golden_answer}
 
-    # === System persona ===
-    persona = f"""
-You are a warm, concise tutor.
-Concept: {concept_name}
-Golden Answer: {golden_answer}
-Student Explanation: {user_message}
-{history_context}
+Heuristic info about the current answer:
+- Similarity bucket: {similarity_bucket}
+- Raw similarity score: {similarity:.2f}
+- Token overlap: {overlap:.2f}
+- Current attempt number (1-based): {attempt_count + 1} of 3
 
-Rules:
-- Respond in plain English.
-- Max 3 short sentences.
-- Be supportive but not chatty.
-- NEVER reveal the golden answer before the 3rd attempt.
-- On attempt 3: if still incorrect, you MAY reveal the correct idea and tell them to move on.
+Recent conversation (if any):
+{history_block if history_block else "(no prior turns)"}
+
+INTERACTION DESIGN (you must follow this very strictly):
+
+1. First, internally classify the student's message (do NOT mention the label):
+   - A genuine attempt to explain the concept,
+   - An expression of confusion or inability (e.g. "I don't know", "I can't explain this",
+     "I don't think we can explain this", "I have no idea"),
+   - A procedural/meta question about the task (e.g. "what should I do?", "should I explain this?"),
+   - Off-topic or answering a different question (e.g. talking about the cause of death
+     instead of what a moderator is).
+
+2. General style:
+   - Respond in plain English only.
+   - Use at most 3 short sentences.
+   - Be warm and supportive, but not overly enthusiastic or chatty.
+   - Focus on the current concept, not on storytelling details.
+   - Avoid generic filler like "you're on the right track" or "good job" if the answer is clearly wrong,
+     off-topic, or the student says they cannot explain.
+   - If the similarity bucket is "very_low", do NOT say they are correct or "on the right track".
+
+3. Attempt logic:
+   - Attempt 1 (attempt_count = 0):
+       * If the explanation is incorrect or off-topic:
+           - Clearly but gently explain that it does not yet describe what the concept means.
+           - Give ONE broad, simple hint about what type of relationship or variable they should think about.
+           - Ask ONE guiding question to help them try again.
+       * If partially correct:
+           - Briefly name what is right.
+           - Point to ONE important missing aspect with a hint.
+           - Ask ONE guiding question.
+   - Attempt 2 (attempt_count = 1):
+       * If still incomplete or confused:
+           - Be a bit more explicit about what is missing, but DO NOT reveal the full golden answer.
+           - Correct one key misunderstanding if present.
+           - Ask ONE focused question that pushes them closer to the correct idea.
+       * If mostly correct:
+           - Confirm that the core idea is right and suggest they refine one small point.
+   - Attempt 3 (attempt_count = 2):
+       * If the explanation is now basically correct:
+           - Briefly confirm that and tell them they can move on to the next concept.
+       * If still clearly incorrect, very low similarity, or completely off-topic:
+           - Briefly provide the correct core idea of the concept in 1–2 sentences.
+           - Then explicitly tell them they can move on to the next concept.
+
+4. Special cases:
+   - If the student expresses confusion or inability ("I don't know", "we can't explain this", etc.):
+       * Acknowledge that it is okay not to know yet.
+       * Do NOT praise their explanation (because they did not really explain).
+       * Give them a very simple entry point (e.g. "You can start by saying what changes when X changes")
+         and ask ONE guiding question.
+   - If the message is mostly procedural/meta ("what should I do now?", "do I have to explain this?"):
+       * Briefly remind them of the task: they should explain the concept in their own words.
+       * Invite them to start, and give ONE concrete suggestion for how to begin their explanation.
+   - If the answer is off-topic (e.g. discussing cause of death instead of what a moderator is):
+       * Say clearly but gently that this does not really define the concept.
+       * Redirect them by stating in one sentence what kind of relationship/variable the concept is about.
+       * Ask them to try again with that focus.
+
+5. Golden answer visibility:
+   - Never quote or fully reveal the golden answer text before attempt 3.
+   - On attempt 3, if the student is still wrong, you may summarize the core idea of the golden answer
+     in your own words, then tell them to move on.
+
+Your response:
+- Must follow these rules.
+- Must be a single short paragraph (up to 3 sentences).
+- Must NOT mention "similarity", "bucket", "heuristics", or "attempt count" explicitly.
 """
 
-    # === Attempt level instructions ===
-    if attempt_count == 0:
-        style = "This is the 1st attempt. Give general feedback and one gentle hint."
-    elif attempt_count == 1:
-        style = "This is the 2nd attempt. Point out what's missing but do NOT reveal the correct answer. Encourage one more try."
-    elif attempt_count == 2:
-        style = (
-            "This is the 3rd attempt. If correct, confirm. "
-            "If still incorrect, briefly provide the correct idea and instruct them to move on."
-        )
-    else:
-        return "You've already completed your three attempts — please continue to the next concept."
+    # -------------------------------------------------
+    # 7. User message fed into GPT for semantic evaluation
+    # -------------------------------------------------
+    user_prompt = f'The student said: "{user_message}". Respond as the tutor.'
 
-
-    # === Call the model ===
     try:
-        completion = openai.ChatCompletion.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": persona},
-                {"role": "user", "content": style}
+                {"role": "system", "content": system_prompt},
+                {"role": "user",  "content": user_prompt}
             ],
-            max_tokens=120,
-            temperature=0.4
+            max_tokens=150,
+            temperature=0.55
         )
-        return completion.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
 
     except Exception as e:
-        return f"Error generating feedback: {str(e)}"
+        # Fallback in case the API fails
+        return f"Error generating AI response: {str(e)}"
 
 
 # def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
