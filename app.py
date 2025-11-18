@@ -1231,45 +1231,45 @@ def submit_message():
         if not user_transcript:
             return jsonify({'status':'error','message':'No user message received'}), 400
 
-        # -------------------------------
-        # 4) META-QUESTION HANDLING ("Do I need to explain?")
-        # -------------------------------
-        if is_meta_question(user_transcript):
-            left = attempts_left(concept_name)
-            if left > 0:
-                response = (
-                    f"Yes — please go through the concept of {concept_name} and "
-                    f"explain it in your own words; {format_attempts_left(concept_name)}."
-                )
-            else:
-                response = (
-                    f"You’ve already used all 3 tries for {concept_name}. "
-                    f"Let’s move on to the next one."
-                )
+        # # -------------------------------
+        # # 4) META-QUESTION HANDLING ("Do I need to explain?")
+        # # -------------------------------
+        # if is_meta_question(user_transcript):
+        #     left = attempts_left(concept_name)
+        #     if left > 0:
+        #         response = (
+        #             f"Yes — please go through the concept of {concept_name} and "
+        #             f"explain it in your own words; {format_attempts_left(concept_name)}."
+        #         )
+        #     else:
+        #         response = (
+        #             f"You’ve already used all 3 tries for {concept_name}. "
+        #             f"Let’s move on to the next one."
+        #         )
 
-            log_interaction("User", concept_name, user_transcript)
-            log_interaction("AI", concept_name, response)
-            log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
-            log_interaction_to_db_only("AI", concept_name, response, attempt_count)
+        #     log_interaction("User", concept_name, user_transcript)
+        #     log_interaction("AI", concept_name, response)
+        #     log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
+        #     log_interaction_to_db_only("AI", concept_name, response, attempt_count)
 
-            folders = get_participant_folder(participant_id, trial_type)
-            ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
-            ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-            generate_audio(response, ai_audio_path)
+        #     folders = get_participant_folder(participant_id, trial_type)
+        #     ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
+        #     ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+        #     generate_audio(response, ai_audio_path)
 
-            conv_store.setdefault(concept_name, []).append(f"User: {user_transcript}")
-            conv_store[concept_name].append(f"AI: {response}")
-            session['conversation_history'] = conv_store
-            session.modified = True
+        #     conv_store.setdefault(concept_name, []).append(f"User: {user_transcript}")
+        #     conv_store[concept_name].append(f"AI: {response}")
+        #     session['conversation_history'] = conv_store
+        #     session.modified = True
 
-            return jsonify({
-                'status': 'success',
-                'response': response,
-                'user_transcript': user_transcript,
-                'ai_audio_url': ai_audio_filename,
-                'attempt_count': attempt_count,
-                'should_move_to_next': (left <= 0)
-            })
+        #     return jsonify({
+        #         'status': 'success',
+        #         'response': response,
+        #         'user_transcript': user_transcript,
+        #         'ai_audio_url': ai_audio_filename,
+        #         'attempt_count': attempt_count,
+        #         'should_move_to_next': (left <= 0)
+        #     })
 
         # -------------------------------
         # 5) Generate V2-style natural tutor reply
