@@ -567,6 +567,7 @@ def generate_audio(text, output_path):
             model="gpt-4o-mini-tts",
             voice="sol",
             input=ssml_text,
+            input_type="ssml",
             format="mp3"
         )
 
@@ -835,18 +836,18 @@ def stream_submit_message_v1():
         return f"Error: {str(e)}", 500
 
 
-def ssml_wrap(text):
-    """Safe SSML wrapper without aggressive prosody manipulation."""
-    try:
-        def esc(t):
-            return (t.replace('&', '&amp;')
-                     .replace('<', '&lt;')
-                     .replace('>', '&gt;'))
+# def ssml_wrap(text):
+#     """Safe SSML wrapper without aggressive prosody manipulation."""
+#     try:
+#         def esc(t):
+#             return (t.replace('&', '&amp;')
+#                      .replace('<', '&lt;')
+#                      .replace('>', '&gt;'))
 
-        safe = esc(text)
-        return f"<speak>{safe}</speak>"
-    except:
-        return text
+#         safe = esc(text)
+#         return f"<speak>{safe}</speak>"
+#     except:
+#         return text
 
 
 
@@ -890,35 +891,35 @@ def clean_tts_text(text: str) -> str:
 
 
 
-@app.route('/synthesize', methods=['POST'])
-def synthesize():
-    try:
-        data = request.get_json() or request.form
-        text = data.get('text') if data else None
-        if not text:
-            return jsonify({'error': 'No text provided'}), 400
-        voice = data.get('voice', 'sol')
-        fmt = data.get('format', 'mp3')
-        try:
-            clean_text = clean_tts_text(text)
-            ssml_text = ssml_wrap(clean_text, rate='5%', pitch='0%', break_ms=220)
-            audio_bytes, content_type = synthesize_with_openai(ssml_text, voice=voice, fmt=fmt)
-            return (audio_bytes, 200, {'Content-Type': content_type, 'Content-Disposition': 'inline; filename="tts.' + fmt + '"'})
-        except Exception as openai_err:
-            print('OpenAI TTS failed or rejected SSML, falling back to gTTS:', str(openai_err))
-        try:
-            from io import BytesIO
-            bio = BytesIO()
-            tts = gTTS(text=clean_text, lang='en')
-            tts.write_to_fp(bio)
-            bio.seek(0)
-            return (bio.read(), 200, {'Content-Type': 'audio/mpeg', 'Content-Disposition': 'inline; filename="tts.mp3"'})
-        except Exception as e:
-            print('gTTS fallback failed:', str(e))
-            return jsonify({'error': 'TTS synthesis failed'}), 500
-    except Exception as e:
-        print('Synthesize endpoint error:', str(e))
-        return jsonify({'error': str(e)}), 500
+# @app.route('/synthesize', methods=['POST'])
+# def synthesize():
+#     try:
+#         data = request.get_json() or request.form
+#         text = data.get('text') if data else None
+#         if not text:
+#             return jsonify({'error': 'No text provided'}), 400
+#         voice = data.get('voice', 'sol')
+#         fmt = data.get('format', 'mp3')
+#         try:
+#             clean_text = clean_tts_text(text)
+#             ssml_text = ssml_wrap(clean_text, rate='5%', pitch='0%', break_ms=220)
+#             audio_bytes, content_type = synthesize_with_openai(ssml_text, voice=voice, fmt=fmt)
+#             return (audio_bytes, 200, {'Content-Type': content_type, 'Content-Disposition': 'inline; filename="tts.' + fmt + '"'})
+#         except Exception as openai_err:
+#             print('OpenAI TTS failed or rejected SSML, falling back to gTTS:', str(openai_err))
+#         try:
+#             from io import BytesIO
+#             bio = BytesIO()
+#             tts = gTTS(text=clean_text, lang='en')
+#             tts.write_to_fp(bio)
+#             bio.seek(0)
+#             return (bio.read(), 200, {'Content-Type': 'audio/mpeg', 'Content-Disposition': 'inline; filename="tts.mp3"'})
+#         except Exception as e:
+#             print('gTTS fallback failed:', str(e))
+#             return jsonify({'error': 'TTS synthesis failed'}), 500
+#     except Exception as e:
+#         print('Synthesize endpoint error:', str(e))
+#         return jsonify({'error': str(e)}), 500
 
 @app.route('/')
 def home():
