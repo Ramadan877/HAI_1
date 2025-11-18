@@ -535,7 +535,7 @@ def generate_audio(text, output_path):
         # 3. OpenAI TTS with SSML
         response = openai.audio.speech.create(
             model="gpt-4o-mini-tts",
-            voice="alloy",
+            voice="sol",
             input=ssml_text,
             format="mp3"
         )
@@ -597,7 +597,7 @@ def health_check():
     return jsonify({'status': 'healthy', 'service': 'HAI V1'}), 200
 
 
-def synthesize_with_openai(text, voice='alloy', fmt='mp3'):
+def synthesize_with_openai(text, voice='sol', fmt='mp3'):
     api_key = os.environ.get('OPENAI_API_KEY')
     if not api_key:
         raise RuntimeError('OpenAI API key not configured')
@@ -832,7 +832,7 @@ def synthesize():
         text = data.get('text') if data else None
         if not text:
             return jsonify({'error': 'No text provided'}), 400
-        voice = data.get('voice', 'alloy')
+        voice = data.get('voice', 'sol')
         fmt = data.get('format', 'mp3')
         try:
             clean_text = clean_tts_text(text)
