@@ -54,17 +54,6 @@ from database import db, Participant, Session, Interaction, Recording, UserEvent
 import uuid
 
 load_dotenv()
-from supabase import create_client
-
-# Supabase server/client configuration
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_SERVICE_KEY = os.environ.get('SUPABASE_SERVICE_ROLE_KEY') or os.environ.get('SUPABASE_KEY')
-supabase = None
-if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-    try:
-        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    except Exception as e:
-        print("Warning: could not initialize Supabase client:", e)
 
 app = Flask(__name__)
 CORS(app)  
@@ -84,10 +73,6 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 app.secret_key = os.environ.get('SECRET_KEY', 'fallback-secret-key')
 
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB limit for long recordings
-
-SUPABASE_DATABASE_URL = os.environ.get('SUPABASE_DATABASE_URL')
-if SUPABASE_DATABASE_URL:
-    app.config['SUPABASE_DATABASE_URL'] = SUPABASE_DATABASE_URL
 
 db.init_app(app)
 
@@ -130,24 +115,6 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
         )
         db.session.add(recording)
         db.session.commit()
-        # After saving locally to the render DB, enqueue background upload to Supabase (non-blocking)
-        try:
-            participant_id = None
-            try:
-                sess = Session.query.filter_by(session_id=session_id).first()
-                participant_id = sess.participant_id if sess else None
-            except Exception:
-                participant_id = None
-
-            if supabase:
-                try:
-                    executor.submit(
-                        lambda p=file_path, s=session_id, pid=participant_id: upload_and_record_supabase(p, s, pid, version='V1')
-                    )
-                except Exception as e:
-                    print('Failed to schedule supabase upload task:', e)
-        except Exception:
-            pass
         return recording.id
     except Exception as e:
         print(f"Error saving recording: {str(e)}")
@@ -155,69 +122,6 @@ def save_recording_to_db(session_id, recording_type, file_path, original_filenam
             db.session.rollback()
         except:
             pass
-        return None
-
-
-def upload_file_to_supabase(local_path, bucket_name='V1', dest_path=None):
-    """Upload a local file to Supabase storage and return public URL and size.
-    This function is best-effort and will not raise to the caller if supabase is not configured.
-    """
-    if supabase is None:
-        return None, None
-    if not dest_path:
-        dest_path = os.path.basename(local_path)
-
-    try:
-        with open(local_path, 'rb') as f:
-            data = f.read()
-
-        storage = supabase.storage.from_(bucket_name)
-        storage.upload(dest_path, data)
-
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{bucket_name}/{dest_path}"
-        size = os.path.getsize(local_path)
-        return public_url, size
-    except Exception as e:
-        print('Supabase upload_file_to_supabase error:', e)
-        return None, None
-
-
-def upload_and_record_supabase(local_path, session_id=None, participant_id=None, version='V1'):
-    """High level: upload the local_path to Supabase storage bucket 'HAI' and insert a row into the
-    `uploads` table. Function swallows errors to avoid affecting main app behavior.
-    """
-    try:
-        if supabase is None:
-            return None
-        if not os.path.exists(local_path):
-            return None
-
-        # dest path namespaced by version/participant/session
-        safe_rel = os.path.basename(local_path)
-        participant_part = participant_id if participant_id else 'unknown'
-        sess_part = session_id if session_id else 'no_session'
-        dest_path = f"{version}/{participant_part}/{sess_part}/{safe_rel}"
-
-        public_url, size = upload_file_to_supabase(local_path, bucket_name='V1', dest_path=dest_path)
-        if public_url:
-            try:
-                supabase.table('uploads').insert({
-                    'session_id': session_id,
-                    'participant_id': participant_id,
-                    'version': version,
-                    'bucket': 'V1',
-                    'path': dest_path,
-                    'public_url': public_url,
-                    'file_name': safe_rel,
-                    'file_type': None,
-                    'file_size': size,
-                    'metadata': {'local_path': local_path}
-                }).execute()
-            except Exception as e:
-                print('Supabase metadata insert failed:', e)
-        return public_url
-    except Exception as e:
-        print('upload_and_record_supabase error:', e)
         return None
 
 def create_session_record(participant_id, trial_type, version):
@@ -463,47 +367,6 @@ def log_interaction(speaker, concept_name, message):
     except Exception as e:
         print(f"Error logging interaction: {str(e)}")
         return False
-
-
-@app.route('/finalize_session', methods=['POST'])
-def finalize_session():
-    """Endpoint called from client on unload. Upload remaining files for the participant/session to Supabase.
-    This is best-effort and non-blocking from the client perspective.
-    """
-    try:
-        data = request.get_json(silent=True) or {}
-        participant_id = data.get('participant_id') or session.get('participant_id')
-        session_id = data.get('session_id') or session.get('session_id')
-        version = data.get('version') or 'V1'
-
-        if not participant_id:
-            return jsonify({'status':'error','message':'missing participant_id'}), 400
-
-        # find participant folder
-        folders = get_participant_folder(participant_id, session.get('trial_type',''))
-        participant_folder = folders['participant_folder']
-
-        uploaded = []
-        if os.path.exists(participant_folder):
-            for root, _, files in os.walk(participant_folder):
-                for fname in files:
-                    if fname.startswith('.'):
-                        continue
-                    local_path = os.path.join(root, fname)
-                    try:
-                        if 'executor' in globals() and executor:
-                            executor.submit(lambda p=local_path, s=session_id, pid=participant_id: upload_and_record_supabase(p, s, pid, version=version))
-                        else:
-                            import threading
-                            threading.Thread(target=upload_and_record_supabase, args=(local_path, session_id, participant_id, version), daemon=True).start()
-                        uploaded.append(local_path)
-                    except Exception as e:
-                        print('finalize_session scheduling failed for', local_path, e)
-
-        return jsonify({'status':'ok','scheduled':len(uploaded)}), 200
-    except Exception as e:
-        print('finalize_session error:', e)
-        return jsonify({'status':'error','message':str(e)}), 500
     
 def get_audio_filename(prefix, participant_id, interaction_number, extension='.mp3'):
     """Generate a unique audio filename with participant ID, concept name, and interaction number."""
@@ -513,43 +376,42 @@ def get_audio_filename(prefix, participant_id, interaction_number, extension='.m
     concept_part = f"_{secure_filename(concept_name)}" if concept_name else ""
     return f"{prefix}{concept_part}_{interaction_number}_{participant_id}{extension}"
 
-def generate_audio(text, output_path):
-    """
-    Generate speech with SOL voice using minimal SSML,
-    to avoid artificial pauses. Falls back to gTTS if needed.
-    """
-    import html
-    from gtts import gTTS
-
-    cleaned = clean_tts_text(text)
-    ssml = f"<speak>{html.escape(cleaned)}</speak>"
-
+def generate_audio(text, file_path):
+    """Generate speech (audio) from the provided text using gTTS with proper file handling."""
     try:
-        # OpenAI TTS with SOL
-        response = openai.audio.speech.create(
-            model="gpt-4o-mini-tts",
-            voice="sol",
-            input=ssml,
-            format="mp3"
-        )
-        audio_bytes = response.read()
-
-        with open(output_path, "wb") as f:
-            f.write(audio_bytes)
-
-        return True
-
-    except Exception as e:
-        print("OpenAI TTS failed, falling back to gTTS:", e)
-
         try:
-            tts = gTTS(cleaned, lang="en", slow=False)
-            tts.save(output_path)
+            smooth_ssml = ssml_wrap_smooth(clean_text)
+            audio_bytes, content_type = synthesize_with_openai_lively(
+                smooth_ssml, 
+                voice="sol", 
+                fmt="mp3"
+            )
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "wb") as f:
+                f.write(audio_bytes)
+            print(f"[TTS] Natural voice synthesis succeeded: {file_path}")
             return True
-        except Exception as e2:
-            print("gTTS also failed:", e2)
-            return False
+        except Exception as e:
+            print(f"[TTS] OpenAI lively synthesis failed: {e}. Using gTTS fallback.")
 
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+            temp_path = temp_file.name
+
+        tts = gTTS(text=clean_text, lang='en', slow=False)
+        tts.save(temp_path)
+
+        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            shutil.move(temp_path, file_path)
+            return True
+
+        return False
+    except Exception as e:
+        print(f"V1: Error generating audio: {str(e)}")
+        return False
+    
 
 @app.route('/list_recent_recordings')
 def list_recent_recordings():
@@ -590,204 +452,203 @@ def health_check():
     return jsonify({'status': 'healthy', 'service': 'HAI V1'}), 200
 
 
-def synthesize_with_openai(text, voice='sol', fmt='mp3'):
+def synthesize_with_openai_lively(text, voice="sol", fmt="mp3"):
     """
-    Unified OpenAI TTS with SOL.
-    Takes plain text, wraps it once in SSML, no manual breaks.
+    Natural, lively TTS synthesis using OpenAI TTS with smooth prosody and no robotic pauses.
     """
-    import html
-    api_key = os.environ.get('OPENAI_API_KEY')
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError('OpenAI API key not configured')
+        raise RuntimeError("Missing OPENAI_API_KEY")
 
-    cleaned = clean_tts_text(text)
-    ssml = f"<speak>{html.escape(cleaned)}</speak>"
-
-    url = 'https://api.openai.com/v1/audio/speech'
+    endpoint = "https://api.openai.com/v1/audio/speech"
     headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json'
-    }
-    payload = {
-        'model': 'gpt-4o-mini-tts',
-        'voice': voice,
-        'input': ssml,
-        'format': fmt,
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
     }
 
-    resp = requests.post(url, headers=headers, json=payload, stream=True, timeout=60)
+    # Soft prosody + gentle flow + no harsh breaks
+    ssml = f"""
+    <speak>
+      <voice name="{voice}">
+        <prosody rate="0%" pitch="+5%">
+          {text}
+        </prosody>
+      </voice>
+    </speak>
+    """
+
+    payload = {
+        "model": "gpt-4o-mini-tts",
+        "voice": voice,
+        "input": ssml,
+        "format": fmt
+    }
+
+    resp = requests.post(endpoint, json=payload, headers=headers, stream=False, timeout=60)
     resp.raise_for_status()
 
-    audio_bytes = resp.content
-    content_type = 'audio/mpeg' if fmt.lower() in ('mp3', 'mpeg') else 'audio/webm'
-    return audio_bytes, content_type
+    return resp.content, "audio/mpeg"
 
 
-@app.route('/stream_submit_message_v1', methods=['POST'])
+
+@app.route('/stream_submit_message', methods=['POST'])
 def stream_submit_message_v1():
-    """Streaming version of the tutor response using unified logic."""
+    """Streaming variant for V1: streams partial text tokens to the client."""
     try:
         participant_id = session.get('participant_id')
         trial_type = session.get('trial_type')
-
         if not participant_id or not trial_type:
-            return "Session error: Missing participant or trial type.", 400
+            return jsonify({'status': 'error', 'message': 'Participant ID or trial type not found in session'}), 400
 
-        # -----------------------------------
-        # 1. Resolve concept
-        # -----------------------------------
         concept_name = request.form.get('concept_name', '').strip()
         concepts = load_concepts()
 
-        matched = next((c for c in concepts if c.lower() == concept_name.lower()), None)
-        if not matched:
-            return "Concept not found", 400
+        concept_found = False
+        for concept in concepts:
+            if concept.lower() == concept_name.lower():
+                concept_name = concept
+                concept_found = True
+                break
 
-        concept_name = matched
+        if not concept_found:
+            return jsonify({'status': 'error', 'message': 'Concept not found'}), 400
+
         golden_answer = concepts[concept_name]['golden_answer']
 
-        # -----------------------------------
-        # 2. Load attempts + history
-        # -----------------------------------
-        concept_attempts = session.get('concept_attempts', {})
-        attempt_count = concept_attempts.get(concept_name, 0)
+        user_transcript = ''
+        user_transcript = request.form.get('message', '')
 
-        conv_store = session.get('conversation_history', {})
-        conversation_history = conv_store.get(concept_name, [])
-
-        # -----------------------------------
-        # 3. Get transcript
-        # -----------------------------------
-        user_transcript = request.form.get('message', '').strip()
-        if not user_transcript and 'audio' not in request.files:
-            return "No input detected", 400
-
-        # Audio transcription
         if 'audio' in request.files:
             audio_file = request.files['audio']
             if audio_file:
                 folders = get_participant_folder(participant_id, trial_type)
-                audio_filename = get_audio_filename('user', participant_id, attempt_count + 1)
+                audio_filename = get_audio_filename('user', participant_id, 1)
                 audio_path = os.path.join(folders['participant_folder'], audio_filename)
                 audio_file.save(audio_path)
-
                 try:
-                    with open(audio_path, "rb") as af:
-                        user_transcript = openai.Audio.transcribe(
-                            model="whisper-1",
-                            file=af
-                        )["text"]
-                except:
+                    with open(audio_path, 'rb') as f:
+                        user_transcript = openai.Audio.transcribe(model='whisper-1', file=f)['text']
+                except Exception:
                     user_transcript = speech_to_text(audio_path)
 
-        if not user_transcript:
-            return "Failed to transcribe message.", 400
+        messages = [
+            {"role": "system", "content": f"Context: {concept_name}\nGolden Answer: {golden_answer}"},
+            {"role": "user", "content": user_transcript}
+        ]
 
-        # -----------------------------------
-        # 4. Generate tutor reply (LLM)
-        # -----------------------------------
-        response = generate_response(
-            user_message=user_transcript,
-            concept_name=concept_name,
-            golden_answer=golden_answer,
-            attempt_count=attempt_count,
-            conversation_history=conversation_history
-        )
+        def generate():
+            try:
+                stream_resp = openai.ChatCompletion.create(
+                    model='gpt-4o-mini',
+                    messages=messages,
+                    max_tokens=80,
+                    temperature=0.4,
+                    stream=True
+                )
 
-        # -----------------------------------
-        # 5. Compute new attempt count
-        # -----------------------------------
-        import re
-        from difflib import SequenceMatcher
+                final_text = ''
+                for event in stream_resp:
+                    token = ''
+                    try:
+                        if isinstance(event, dict) and 'choices' in event:
+                            ch = event['choices'][0]
+                            if 'delta' in ch:
+                                token = ch['delta'].get('content', '')
+                            elif 'text' in ch:
+                                token = ch.get('text', '')
+                    except Exception:
+                        token = ''
 
-        def norm(t):
-            return re.sub(r'[^a-z0-9\s]', '', (t or '').lower())
+                    if token:
+                        final_text += token
+                        yield token
 
-        sim = SequenceMatcher(None, norm(user_transcript), norm(golden_answer)).ratio()
+                try:
+                    concept_attempts = session.get('concept_attempts', {})
+                    attempt_count = concept_attempts.get(concept_name, 0)
+                    attempt_count += 1
+                    concept_attempts[concept_name] = attempt_count
+                    session['concept_attempts'] = concept_attempts
 
-        if sim >= 0.80:
-            new_attempt = 3
-        else:
-            new_attempt = min(attempt_count + 1, 3)
+                    folders = get_participant_folder(participant_id, trial_type)
+                    ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
+                    ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
 
-        session['concept_attempts'][concept_name] = new_attempt
-        session.modified = True
+                    generated = False
+                    try:
+                        generated = generate_audio(final_text, ai_audio_path)
+                    except Exception as e:
+                        print('Audio generation error after streaming:', str(e))
 
-        # -----------------------------------
-        # 6. Logging
-        # -----------------------------------
-        log_interaction("User", concept_name, user_transcript)
-        log_interaction("AI", concept_name, response)
-        log_interaction_to_db_only("USER", concept_name, user_transcript, new_attempt)
-        log_interaction_to_db_only("AI", concept_name, response, new_attempt)
+                    try:
+                        session_id = session.get('session_id')
+                        if session_id and os.path.exists(ai_audio_path):
+                            with open(ai_audio_path, 'rb') as f:
+                                ai_audio_data = f.read()
+                            save_audio_with_cloud_backup(ai_audio_data, ai_audio_filename, session_id, 'ai_audio', concept_name, attempt_count)
+                    except Exception as e:
+                        print('Failed to backup AI audio:', str(e))
 
-        # -----------------------------------
-        # 7. Generate audio
-        # -----------------------------------
-        folders = get_participant_folder(participant_id, trial_type)
-        ai_audio_filename = get_audio_filename('ai', participant_id, new_attempt)
-        ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-        generate_audio(response, ai_audio_path)
+                    meta = json.dumps({
+                        'ai_audio_url': ai_audio_filename,
+                        'attempt_count': attempt_count,
+                        'response': final_text
+                    })
+                    yield '\n__JSON__START__' + meta + '__JSON__END__\n'
+                except Exception as e:
+                    yield f"\n[error-postprocess] {str(e)}\n"
+            except Exception as e:
+                yield f"[error] {str(e)}"
 
-        # -----------------------------------
-        # 8. Return JSON payload
-        # -----------------------------------
-        payload = {
-            "status": "success",
-            "response": response,
-            "user_transcript": user_transcript,
-            "ai_audio_url": ai_audio_filename,
-            "attempt_count": new_attempt,
-            "should_move_to_next": (new_attempt >= 3)
-        }
-
-        return jsonify(payload)
-
+        return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
     except Exception as e:
-        print("Error in stream_submit_message_v1:", str(e))
-        return f"Error: {str(e)}", 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
-def ssml_wrap(text):
-    """Safe SSML wrapper without aggressive prosody manipulation."""
-    try:
-        def esc(t):
-            return (t.replace('&', '&amp;')
-                     .replace('<', '&lt;')
-                     .replace('>', '&gt;'))
+def ssml_wrap_smooth(text):
+    """
+    Smooth SSML without inserting random breaks.
+    Keeps phrasing natural and avoids robotic pacing.
+    """
+    def esc(t):
+        return (t.replace("&", "&amp;")
+                 .replace("<", "&lt;")
+                 .replace(">", "&gt;")
+                 .replace('"', "&quot;")
+                 .replace("'", "&apos;"))
 
-        safe = esc(text)
-        return f"<speak>{safe}</speak>"
-    except:
-        return text
+    clean = esc(text)
 
+    return f"""
+    <speak>
+      <prosody rate="0%" pitch="+4%">
+        {clean}
+      </prosody>
+    </speak>
+    """
 
 
 def clean_tts_text(text: str) -> str:
     """
-    Light cleanup for TTS:
-    - remove URLs / markdown junk
-    - normalize whitespace
-    - ensure it ends with a sentence terminator
-    NO punctuation rewriting, NO artificial breaks.
+    Clean text before sending to Text-to-Speech.
+    Removes symbols, markdown, and formatting artifacts so TTS sounds natural.
     """
-    import re
-
     if not text:
         return ""
-
-    # Strip URLs and markdown-ish characters
+    # Remove URLs
     text = re.sub(r'http\S+', '', text)
+    # Remove markdown & code artifacts
     text = re.sub(r'[*_#`~<>^{}\[\]|]', '', text)
+    # Replace slashes and backslashes with space (pause)
     text = re.sub(r'[\\/]', ' ', text)
-
-    # Normalize spaces
-    text = re.sub(r'\s+', ' ', text).strip()
-
-    # Ensure it ends like a sentence
-    if text and not text.endswith(('.', '!', '?')):
-        text += '.'
-
+    # Remove multiple punctuation (e.g., '!!!' -> '!')
+    text = re.sub(r'([!?.,])\1+', r'\1', text)
+    # Remove stray hyphens, underscores, and symbols
+    text = re.sub(r'[-_=+]', ' ', text)
+    # Replace multiple spaces or newlines with single space
+    text = re.sub(r'\s+', ' ', text)
+    # Trim
+    text = text.strip()
     return text
 
 
@@ -798,48 +659,28 @@ def synthesize():
         text = data.get('text') if data else None
         if not text:
             return jsonify({'error': 'No text provided'}), 400
-
-        voice = data.get('voice', 'sol')
+        voice = data.get('voice', 'alloy')
         fmt = data.get('format', 'mp3')
-
         try:
             clean_text = clean_tts_text(text)
-            audio_bytes, content_type = synthesize_with_openai(clean_text, voice=voice, fmt=fmt)
-            return (
-                audio_bytes,
-                200,
-                {
-                    'Content-Type': content_type,
-                    'Content-Disposition': f'inline; filename="tts.{fmt}"'
-                }
-            )
+            ssml_text = ssml_wrap(clean_text, rate='5%', pitch='0%', break_ms=220)
+            audio_bytes, content_type = synthesize_with_openai(ssml_text, voice=voice, fmt=fmt)
+            return (audio_bytes, 200, {'Content-Type': content_type, 'Content-Disposition': 'inline; filename="tts.' + fmt + '"'})
         except Exception as openai_err:
-            print('OpenAI TTS failed, falling back to gTTS:', str(openai_err))
-
-        # Fallback: gTTS
+            print('OpenAI TTS failed or rejected SSML, falling back to gTTS:', str(openai_err))
         try:
             from io import BytesIO
-            clean_text = clean_tts_text(text)
             bio = BytesIO()
             tts = gTTS(text=clean_text, lang='en')
             tts.write_to_fp(bio)
             bio.seek(0)
-            return (
-                bio.read(),
-                200,
-                {
-                    'Content-Type': 'audio/mpeg',
-                    'Content-Disposition': 'inline; filename="tts.mp3"'
-                }
-            )
+            return (bio.read(), 200, {'Content-Type': 'audio/mpeg', 'Content-Disposition': 'inline; filename="tts.mp3"'})
         except Exception as e:
             print('gTTS fallback failed:', str(e))
             return jsonify({'error': 'TTS synthesis failed'}), 500
-
     except Exception as e:
         print('Synthesize endpoint error:', str(e))
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/')
 def home():
@@ -897,32 +738,27 @@ def set_context():
     concept_name = request.form.get('concept_name')
     slide_number = request.form.get('slide_number', '0')
     logger.info(f"Setting context for concept: {concept_name}")
-    
     concepts = load_concepts()
     
-    selected_concept_key = next(
-        (k for k in concepts.keys() if k.lower() == concept_name.lower()),
-        None
-    )
-    
-    if not selected_concept_key:
+    selected_concept = next((c for c in concepts if c["name"] == concept_name), None)
+
+    if not selected_concept:
         logger.error(f"Invalid concept selection: {concept_name}")
         return jsonify({'error': 'Invalid concept selection'})
-    
-    selected_concept = concepts[selected_concept_key]
-    session['concept_name'] = selected_concept_key
-    session['golden_answer'] = selected_concept.get("golden_answer", "")
+
+    session['concept_name'] = selected_concept["name"]
+    session['golden_answer'] = selected_concept["golden_answer"]
     
     if 'concept_attempts' not in session:
         session['concept_attempts'] = {}
-    session['concept_attempts'][selected_concept_key] = 0
+    session['concept_attempts'][concept_name] = 0
     session.modified = True
 
-    log_interaction("SYSTEM", selected_concept_key, 
-                    f"Context set for concept: {selected_concept_key}")
+    log_interaction("SYSTEM", selected_concept["name"], 
+                    f"Context set for concept: {selected_concept['name']}")
 
-    logger.info(f"Context set successfully for: {selected_concept_key}")
-    return jsonify({'message': f'Context set for {selected_concept_key}.'})
+    logger.info(f"Context set successfully for: {selected_concept['name']}")
+    return jsonify({'message': f'Context set for {selected_concept["name"]}.'})
 
 @app.route('/change_concept', methods=['POST'])
 def change_concept():
@@ -1066,172 +902,77 @@ def get_concept_audio(concept_name):
             'status': 'error',
             'message': str(e)
         }), 500
-    
 
 @app.route('/submit_message', methods=['POST'])
 def submit_message():
-    """Handle user message submission and generate AI response (V2-style natural replies)."""
+    """Handle user message submission and generate AI response."""
     try:
         participant_id = session.get('participant_id')
         trial_type = session.get('trial_type')
-
+        
         if not participant_id or not trial_type:
-            return jsonify({'status': 'error','message':'Participant ID or trial type not found'}), 400
+            return jsonify({
+                'status': 'error',
+                'message': 'Participant ID or trial type not found in session'
+            }), 400
 
-        # -------------------------------
-        # 1) Load concept + validate
-        # -------------------------------
         concept_name = request.form.get('concept_name', '').strip()
+        print(f"Received concept from frontend: {concept_name}")  # Debug print
+
         concepts = load_concepts()
+        print(f"Available concepts: {list(concepts.keys())}")  # Debug print
+        
+        concept_found = False
+        for concept in concepts:
+            if concept.lower() == concept_name.lower():
+                concept_name = concept  
+                concept_found = True
+                print(f"Found matching concept: {concept}")  # Debug print
+                break
 
-        matched = next((c for c in concepts if c.lower() == concept_name.lower()), None)
-        if not matched:
-            return jsonify({'status':'error','message':'Concept not found'}), 400
+        if not concept_found:
+            print(f"Error: Concept '{concept_name}' not found in system!")
+            return jsonify({
+                'status': 'error',
+                'message': 'Concept not found'
+            }), 400
 
-        concept_name = matched
         golden_answer = concepts[concept_name]['golden_answer']
-
-        # -------------------------------
-        # 2) Load attempts + conversation history
-        # -------------------------------
+        
         concept_attempts = session.get('concept_attempts', {})
         attempt_count = concept_attempts.get(concept_name, 0)
 
-        conv_store = session.get('conversation_history', {})
-        conversation_history = conv_store.get(concept_name, [])
-
-        # -------------------------------
-        # 3) Retrieve or transcribe user message
-        # -------------------------------
-        user_transcript = request.form.get('message', '').strip()
-
+        conv_store = session.get('conversation_history')
+        if conv_store is None or isinstance(conv_store, dict):
+            conversation_history = (conv_store or {}).get(concept_name, [])
+        else:
+            print(f"Warning: session['conversation_history'] has unexpected type {type(conv_store)}, resetting to dict")
+            session['conversation_history'] = {}
+            conversation_history = []
+        
         if 'audio' in request.files:
             audio_file = request.files['audio']
             if audio_file:
-                folders = get_participant_folder(participant_id, trial_type)
                 audio_filename = get_audio_filename('user', participant_id, attempt_count + 1)
+                folders = get_participant_folder(participant_id, trial_type)
                 audio_path = os.path.join(folders['participant_folder'], audio_filename)
                 audio_file.save(audio_path)
-
+                
                 try:
-                    with open(audio_path, "rb") as af:
+                    with open(audio_path, "rb") as audio_file:
                         user_transcript = openai.Audio.transcribe(
                             model="whisper-1",
-                            file=af
+                            file=audio_file
                         )["text"]
-                except Exception:
+                except Exception as e:
+                    print(f"OpenAI transcription failed, falling back to local model: {str(e)}")
                     user_transcript = speech_to_text(audio_path)
-
-        if not user_transcript:
-            return jsonify({'status':'error','message':'No user message received'}), 400
-
-        # # -------------------------------
-        # # 4) META-QUESTION HANDLING ("Do I need to explain?")
-        # # -------------------------------
-        # if is_meta_question(user_transcript):
-        #     left = attempts_left(concept_name)
-        #     if left > 0:
-        #         response = (
-        #             f"Yes — please go through the concept of {concept_name} and "
-        #             f"explain it in your own words; {format_attempts_left(concept_name)}."
-        #         )
-        #     else:
-        #         response = (
-        #             f"You’ve already used all 3 tries for {concept_name}. "
-        #             f"Let’s move on to the next one."
-        #         )
-
-        #     log_interaction("User", concept_name, user_transcript)
-        #     log_interaction("AI", concept_name, response)
-        #     log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
-        #     log_interaction_to_db_only("AI", concept_name, response, attempt_count)
-
-        #     folders = get_participant_folder(participant_id, trial_type)
-        #     ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
-        #     ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-        #     generate_audio(response, ai_audio_path)
-
-        #     conv_store.setdefault(concept_name, []).append(f"User: {user_transcript}")
-        #     conv_store[concept_name].append(f"AI: {response}")
-        #     session['conversation_history'] = conv_store
-        #     session.modified = True
-
-        #     return jsonify({
-        #         'status': 'success',
-        #         'response': response,
-        #         'user_transcript': user_transcript,
-        #         'ai_audio_url': ai_audio_filename,
-        #         'attempt_count': attempt_count,
-        #         'should_move_to_next': (left <= 0)
-        #     })
-
-        # -------------------------------
-        # 5) Generate V2-style natural tutor reply
-        # -------------------------------
-        response = generate_response(
-            user_message=user_transcript,
-            concept_name=concept_name,
-            golden_answer=golden_answer,
-            attempt_count=attempt_count,
-            conversation_history=conversation_history
-        )
-
-        # -------------------------------
-        # 6) Update attempts (natural logic)
-        # -------------------------------
-        # Detect similarity early before increment
-        import re
-        from difflib import SequenceMatcher
-        def norm(t): return re.sub(r'[^a-z0-9\s]', '', (t or '').lower())
-        sim = SequenceMatcher(None, norm(user_transcript), norm(golden_answer)).ratio()
-
-        if sim >= 0.80:
-            new_attempt = 3     
-        else:
-            new_attempt = min(attempt_count + 1, 3)
-
-        session['concept_attempts'][concept_name] = new_attempt
-
-        # -------------------------------
-        # 7) Logging (file + DB)
-        # -------------------------------
-        log_interaction("User", concept_name, user_transcript)
-        log_interaction("AI", concept_name, response)
-        log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count + 1)
-        log_interaction_to_db_only("AI", concept_name, response, attempt_count + 1)
-
-        # -------------------------------
-        # 8) Save AI audio
-        # -------------------------------
-        folders = get_participant_folder(participant_id, trial_type)
-        ai_audio_filename = get_audio_filename('ai', participant_id, new_attempt)
-        ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-        generate_audio(response, ai_audio_path)
-
-        # -------------------------------
-        # 9) Update conversation history
-        # -------------------------------
-        conv_store.setdefault(concept_name, []).append(f"User: {user_transcript}")
-        conv_store[concept_name].append(f"AI: {response}")
-        session['conversation_history'] = conv_store
-        session.modified = True
-
-        # -------------------------------
-        # 10) Return result
-        # -------------------------------
-        return jsonify({
-            'status': 'success',
-            'response': response,
-            'user_transcript': user_transcript,
-            'ai_audio_url': ai_audio_filename,
-            'attempt_count': new_attempt,
-            'should_move_to_next': (new_attempt >= 3)
-        })
-
-    except Exception as e:
-        print(f"Error in submit_message: {str(e)}")
-        return jsonify({'status':'error','message':str(e)}), 500
-
+                
+                if not user_transcript:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'Failed to transcribe audio'
+                    }), 400
 
         def _normalize_for_check(text):
             import re
@@ -1317,354 +1058,154 @@ def submit_message():
             'message': str(e)
         }), 500
 
+def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
+    """Generate concise, supportive, and pedagogically effective feedback for 3 attempts with natural flow."""
 
-# ------------------------------------------------------------
-# SEMANTIC SIMILARITY (Replacement for SequenceMatcher)
-# ------------------------------------------------------------
+    import re
+    import openai
 
-import openai
-import numpy as np
-
-def semantic_similarity(a: str, b: str) -> float:
-    """
-    Uses OpenAI embeddings to compute real semantic similarity.
-    Much more natural than keyword/character similarity.
-    Output: 0.0 – 1.0
-    """
-
-    if not a or not b:
-        return 0.0
-
-    try:
-        emb = openai.embeddings.create(
-            model="text-embedding-3-small",
-            input=[a, b]
+    if not golden_answer or not concept_name:
+        return (
+            "I can’t provide feedback yet because the concept context isn’t set. "
+            "Please make sure both the concept and golden answer are defined."
         )
 
-        e1 = np.array(emb.data[0].embedding)
-        e2 = np.array(emb.data[1].embedding)
+    history_context = ""
+    if conversation_history and len(conversation_history) > 0:
+        history_context = "\nRecent conversation:\n" + "\n".join(conversation_history[-3:])
+    
 
-        cos_sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
-        return float(max(0, min(1, cos_sim)))
+    # --- Normalize for similarity comparison ---
+    def normalize(text):
+        return re.sub(r'[^a-z0-9\s]', '', (text or '').lower().strip())
 
-    except Exception as e:
-        print("Embedding error:", e)
-        return 0.0
+    user_norm = normalize(user_message)
+    golden_norm = normalize(golden_answer)
 
+    try:
+        char_ratio = SequenceMatcher(None, user_norm, golden_norm).ratio()
+    except Exception:
+        char_ratio = 0.0
 
-def apply_ssml_prosody(text: str) -> str:
+    def _word_jaccard(a, b):
+        a_set = set(a.split())
+        b_set = set(b.split())
+        if not a_set and not b_set:
+            return 0.0
+        try:
+            return len(a_set & b_set) / len(a_set | b_set)
+        except Exception:
+            return 0.0
+
+    word_ratio = _word_jaccard(user_norm, golden_norm)
+
+    similarity = max(char_ratio, word_ratio)
+
+    if similarity >= 0.8:
+        return (
+            "Excellent — your explanation is clear and accurate. "
+            "You’ve captured the main idea correctly. "
+            "You can now move on to the next concept."
+        )
+
+    # Base system instructions
+    base_prompt = f"""
+    Context: {concept_name}
+    Golden Answer: {golden_answer}
+    Student Explanation: {user_message}
+    {history_context}
+
+    You are a concise, friendly tutor guiding the student to self-explain a concept.
+    The tone should be warm, motivating, and professional — not overly enthusiastic or verbose.
+
+    Guidelines:
+    - Keep responses under 3 short sentences.
+    - Acknowledge correct parts briefly; do not overpraise.
+    - Never reveal the golden answer before the third attempt.
+    - When the answer is fully correct at any attempt:
+        → Confirm correctness clearly and tell the student to move to the next concept.
+    - When the answer is partially correct:
+        → Mention what is right and point out one missing or unclear part. Give one brief hint.
+    - When the answer is incorrect:
+        → Identify one key misunderstanding and give a small clue for rethinking.
+    - On the third attempt:
+        → If correct, confirm and guide to next concept.
+        → If incorrect, briefly provide the correct explanation, then tell the student to move to the next concept.
+    - Use plain English, no emojis, no lists, no unnecessary filler.
     """
-    Wraps tutor feedback text in SSML prosody tags for smoother, more natural speech.
-    This works for OpenAI TTS and most modern TTS engines that support SSML.
-    """
-    import html
 
-    # Escape to avoid XML issues
-    safe_text = html.escape(text)
+    # ==== Attempt-level instruction ====
+    if attempt_count == 0:
+        user_prompt = (
+            "This is the student's FIRST attempt. If not fully correct, provide general feedback "
+            "and one broad hint about what might be missing in the form of a question."
+        )
+    elif attempt_count == 1:
+        user_prompt = (
+            "This is the student's SECOND attempt. If still incomplete, point out the missing element "
+            "or misconception again in the form of a question but DO NOT reveal the correct answer. Encourage them for one last try."
+        )
+    elif attempt_count == 2:
+        user_prompt = (
+            "This is the student's THIRD and FINAL attempt. "
+            "If correct, confirm and tell them to move to the next concept. "
+            "If still incorrect, now briefly provide the correct explanation and guide them to move on."
+        )
+    else:
+        user_prompt = (
+            "The student has already completed three attempts. "
+            "Acknowledge their effort and tell them to move to the next concept."
+        )
 
-    # Prosody tuning:
-    # - Slightly slower rate (teaching style)
-    # - Slightly higher pitch for friendlier tone
-    # - lightweight sentence-level pauses
-    # - Reduce falling tone between sentences
-    ssml = f"""
-<speak>
-  <prosody rate="95%" pitch="+2%">
-      {safe_text.replace('.', '<break time="300ms"/>')}
-  </prosody>
-</speak>
-""".strip()
+    # Heuristic: only ask to repeat in English when the user's input contains
+    # a substantial proportion of non-Latin characters. This avoids false
+    # positives for accented, noisy, or partially-transcribed English.
+    non_english_re = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
 
-    return ssml
+    def detect_mostly_non_latin(text, threshold=0.35, min_non_latin=3):
+        """Return True if more than `threshold` fraction of characters are
+        non-Latin (as defined by non_english_re) and at least min_non_latin
+        such characters exist. This reduces accidental triggers for noisy
+        English transcripts."""
+        if not text or not isinstance(text, str):
+            return False
+        # Short answers shouldn't be forced to repeat unless clearly non-latin
+        if len(text.strip()) <= 3:
+            return bool(non_english_re.search(text)) and len(non_english_re.findall(text)) >= min_non_latin
 
+        total_chars = len(text)
+        non_latin_chars = len(non_english_re.findall(text))
+        try:
+            frac = non_latin_chars / float(total_chars)
+        except Exception:
+            frac = 0.0
+        return (non_latin_chars >= min_non_latin) and (frac >= threshold)
 
-def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history):
-    system_prompt = f"""
-You are an AI tutor for a self-explanation study.
+    if detect_mostly_non_latin(user_message):
+        return "Please repeat your explanation in English so I can provide feedback."
 
-Your responsibilities:
-- Understand the student’s message.
-- Track whether they are progressing.
-- Decide how much feedback to give.
-- Evaluate correctness, give hints, or corrections.
-- Decide whether they should proceed or try again.
-- Adapt to the student’s language ability.
-- Keep explanations short and friendly.
-- Never reveal the full golden answer until the final attempt.
-- If the student is clearly correct, allow progression.
-- If unsure, ask for clarification.
-- If confused, guide gently.
-- If off-topic, bring them back.
-- If in another language ask them to go back to English.
-- Always respond naturally, like a human tutor.
-- 
-
-Concept: {concept_name}
-Golden answer: {golden_answer}
-Attempt number: {attempt_count}
-Conversation history:
-{conversation_history}
-"""
-
-    result = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ],
-        max_tokens=200,
-        temperature=0.7
+    enforcement_system = (
+        "Respond only in English. "
+        "If the student's input is not in English, ask politely in English to repeat it in English."
     )
-    return result.choices[0].message.content.strip()
 
-
-# def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
-#     """
-#     Unified tutoring logic combining:
-#     - V2 pipeline structure (filler → English check → heuristics → GPT)
-#     - V1 interaction design (no fake praise, confusion handling, natural tone)
-#     - Semantic similarity (OpenAI embeddings)
-#     """
-
-#     import re
-#     import openai
-#     import numpy as np
-
-#     # -------------------------------------------------
-#     # 0. Basic validation
-#     # -------------------------------------------------
-#     if not golden_answer or not concept_name:
-#         return (
-#             "I can’t provide feedback yet because the concept context isn’t set. "
-#             "Please make sure both the concept and golden answer are defined."
-#         )
-
-#     # -------------------------------------------------
-#     # 1. Filler / unclear message detection (KEEP V1 LOGIC)
-#     # -------------------------------------------------
-#     def is_filler(s):
-#         if not s or not str(s).strip():
-#             return True
-#         s2 = str(s).strip().lower()
-#         fillers = {
-#             'ok','okay','yes','no','mm','mmm','hmm','uh','uhh','fine','sure',
-#             'i dont know','idk','not sure'
-#         }
-#         if s2 in fillers:
-#             return True
-#         if len(s2) < 3:
-#             return True
-#         if re.match(r'^[\.\,\-\s]+$', s2):
-#             return True
-#         return False
-
-#     if is_filler(user_message):
-#         if attempt_count >= 2:
-#             return f"{golden_answer} You can now move on to the next concept."
-#         return (
-#             f"I couldn’t quite understand your explanation — it was too brief. "
-#             f"Try explaining {concept_name} in your own words using full sentences."
-#         )
-
-#     # -------------------------------------------------
-#     # 2. English detection
-#     # -------------------------------------------------
-#     def is_likely_english(text):
-#         if not text or not str(text).strip():
-#             return False
-#         txt = str(text)
-#         letters = [c for c in txt if c.isalpha()]
-#         if not letters:
-#             return bool(re.search(r'[A-Za-z]', txt))
-#         total_letters = len(letters)
-#         latin = sum(1 for c in letters if 'a' <= c.lower() <= 'z')
-#         return (latin / total_letters) >= 0.6
-
-#     if not is_likely_english(user_message):
-#         return "Please repeat your explanation in English so I can give feedback."
-
-#     # -------------------------------------------------
-#     # 3. SEMANTIC SIMILARITY via embeddings
-#     # -------------------------------------------------
-#     def semantic_similarity(a: str, b: str) -> float:
-#         try:
-#             emb = openai.embeddings.create(
-#                 model="text-embedding-3-small",
-#                 input=[a, b]
-#             )
-#             e1 = np.array(emb.data[0].embedding)
-#             e2 = np.array(emb.data[1].embedding)
-#             cos_sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
-#             return float(max(0, min(1, cos_sim)))
-#         except Exception as e:
-#             print("Embedding error:", e)
-#             return 0.0
-
-#     sim = semantic_similarity(user_message, golden_answer)
-
-#     if sim >= 0.80:
-#         similarity_bucket = "high"
-#     elif sim >= 0.55:
-#         similarity_bucket = "medium"
-#     elif sim >= 0.35:
-#         similarity_bucket = "low"
-#     else:
-#         similarity_bucket = "very_low"
-
-#     # -------------------------------------------------
-#     # 4. Early acceptance (ONLY if clearly correct)
-#     # -------------------------------------------------
-#     if sim >= 0.88:
-#         if attempt_count >= 2:
-#             return f"{golden_answer} You’re correct. You can now move on to the next concept."
-#         return "Nice explanation — you’ve captured the essential idea. You can move on to the next concept."
-
-#     # -------------------------------------------------
-#     # 5. Conversation history block
-#     # -------------------------------------------------
-#     history_block = ""
-#     if conversation_history:
-#         history_block = "\n".join(conversation_history[-6:])
-
-#     # -------------------------------------------------
-#     # 6. NATURAL TUTOR SYSTEM PROMPT (V2 + V1 MERGED)
-#     # -------------------------------------------------
-#     system_prompt = f"""
-# You are a friendly, intelligent tutor guiding a student through the concept "{concept_name}"
-# as part of a self-explanation learning activity.
-
-# You must ALWAYS respond naturally — like a human tutor — NOT like a scripted rule engine.
-
-# Follow this interaction model strictly:
-
-# 1. CLASSIFY THE STUDENT'S MESSAGE INTERNALLY (do NOT say the label):
-#    - A genuine attempt to explain the concept,
-#    - A sign of confusion (“I don't get it”, “I don’t know what to do”),
-#    - A procedural/meta question (“should I explain this?”, “what do I do?”),
-#    - Off-topic or unrelated content.
-
-# 2. GENERAL BEHAVIOR:
-#    - Respond in warm, plain English.
-#    - Use no more than 3 short sentences.
-#    - Never give generic praise when the answer is clearly wrong or very low similarity.
-#    - If similarity_bucket = "very_low", treat it as incorrect.
-#    - Never say “you’re on the right track” unless the meaning is truly close.
-
-# 3. ATTEMPT LOGIC:
-#    Attempt {attempt_count + 1} of 3.
-#    - Attempt 1:
-#        If incorrect → gently say it doesn't describe the concept and give ONE broad guiding hint.
-#        If partially correct → acknowledge what’s right and point out one missing piece.
-#    - Attempt 2:
-#        Give clearer guidance but DO NOT reveal the golden answer.
-#        Correct ONE key misunderstanding.
-#        Ask ONE focused question.
-#    - Attempt 3:
-#        If correct → confirm and tell them to move to the next concept.
-#        If still incorrect → give a brief 1–2 sentence explanation of the concept (paraphrased),
-#          then tell them to move to the next concept.
-
-# 4. CONFUSION:
-#    If the student shows confusion:
-#        - Normalize their confusion (“It’s okay if this feels unclear.”)
-#        - Provide a simple way to start (“Try describing what changes when X changes.”)
-#        - Ask ONE guiding question.
-
-# 5. META QUESTIONS:
-#    If the student asks what to do:
-#        - Briefly remind them that they should explain the concept in their own words.
-#        - Invite them to begin (“You can start by describing…”).
-
-# 6. OFF-TOPIC ANSWERS:
-#    If the answer is unrelated:
-#        - Say clearly but kindly that it doesn’t define the concept.
-#        - Give ONE sentence about the kind of idea the concept involves.
-#        - Ask them to try again with that focus.
-
-# Golden Answer (DO NOT reveal before attempt 3):
-# {golden_answer}
-
-# Similarity bucket: {similarity_bucket}
-
-# Recent conversation:
-# {history_block if history_block else "(no prior turns)"}
-
-# Your response must be a natural-sounding tutor reply,
-# following the above rules, no more than 3 short sentences.
-# """
-
-#     # -------------------------------------------------
-#     # 7. GPT response generation
-#     # -------------------------------------------------
-#     user_prompt = f'The student said: "{user_message}". Respond as the tutor.'
-
-#     try:
-#         result = openai.ChatCompletion.create(
-#             model="gpt-4o-mini",
-#             messages=[
-#                 {"role": "system", "content": system_prompt},
-#                 {"role": "user", "content": user_prompt}
-#             ],
-#             max_tokens=150,
-#             temperature=0.55
-#         )
-#         return result.choices[0].message.content.strip()
-
-#     except Exception as e:
-#         return f"Error generating AI response: {str(e)}"
-
-
-# def is_meta_question(text: str) -> bool:
-#     if not text:
-#         return False
-#     t = text.lower().strip()
-
-#     cues = [
-#         "do i have to", "should i", "am i supposed to",
-#         "do you want me to", "what should i do",
-#         "how do i start", "how to proceed",
-#         "next step", "what now"
-#     ]
-
-#     return any(c in t for c in cues)
-
-
-def detect_language_openai(text: str) -> str:
-    """
-    Uses OpenAI to detect the language of the input text.
-    Returns the language name in lowercase, e.g. 'english', 'german', 'arabic'.
-    """
-
-    if not text or not text.strip():
-        return "unknown"
+    messages = [
+        {"role": "system", "content": enforcement_system},
+        {"role": "system", "content": base_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
 
     try:
-        result = openai.ChatCompletion.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Detect the language of the next user message. Answer ONLY with the language name."},
-                {"role": "user", "content": text}
-            ],
-            max_tokens=5,
-            temperature=0
+            messages=messages,
+            max_tokens=80,
+            temperature=0.4,
         )
-        lang = result.choices[0].message.content.strip().lower()
-        return lang
-
+        ai_response = response.choices[0].message.content.strip()
+        return ai_response
     except Exception as e:
-        print("Language detection failed:", str(e))
-        return "unknown"
-
-
-def attempts_left(concept_name: str) -> int:
-    tries = session.get('concept_attempts', {}).get(concept_name, 0)
-    return max(0, 3 - int(tries))
-
-def format_attempts_left(concept_name: str) -> str:
-    left = attempts_left(concept_name)
-    if left <= 0:
-        return "you’ve used all your tries for this concept."
-    return f"you still have {left} {'try' if left == 1 else 'tries'} left"
+        return f"Error generating AI response: {str(e)}"
 
 
 @app.route('/pdf')
@@ -2335,4 +1876,5 @@ if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
 
