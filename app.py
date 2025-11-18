@@ -380,19 +380,17 @@ def generate_audio(text, file_path):
     """Generate speech (audio) from the provided text using gTTS with proper file handling."""
     try:
         try:
-            smooth_ssml = ssml_wrap_smooth(clean_text)
-            audio_bytes, content_type = synthesize_with_openai_lively(
-                smooth_ssml, 
-                voice="sol", 
-                fmt="mp3"
-            )
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with open(file_path, "wb") as f:
-                f.write(audio_bytes)
-            print(f"[TTS] Natural voice synthesis succeeded: {file_path}")
-            return True
-        except Exception as e:
-            print(f"[TTS] OpenAI lively synthesis failed: {e}. Using gTTS fallback.")
+            # Clean text for TTS before constructing SSML or using gTTS fallback
+            clean_text = clean_tts_text(text)
+            audio_bytes, content_type = synthesize_with_openai(ssml_wrap(clean_text), voice='alloy', fmt='mp3')
+            if audio_bytes:
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                with open(file_path, 'wb') as f:
+                    f.write(audio_bytes)
+                print(f"V1: Audio file (OpenAI TTS) saved: {file_path}")
+                return True
+        except Exception as openai_err:
+            print(f"V1: OpenAI TTS unavailable or failed: {openai_err}. Falling back to gTTS.")
 
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
             temp_path = temp_file.name
@@ -452,43 +450,18 @@ def health_check():
     return jsonify({'status': 'healthy', 'service': 'HAI V1'}), 200
 
 
-def synthesize_with_openai_lively(text, voice="sol", fmt="mp3"):
-    """
-    Natural, lively TTS synthesis using OpenAI TTS with smooth prosody and no robotic pauses.
-    """
-    api_key = os.environ.get("OPENAI_API_KEY")
+def synthesize_with_openai(text, voice='alloy', fmt='mp3'):
+    api_key = os.environ.get('OPENAI_API_KEY')
     if not api_key:
-        raise RuntimeError("Missing OPENAI_API_KEY")
-
-    endpoint = "https://api.openai.com/v1/audio/speech"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    # Soft prosody + gentle flow + no harsh breaks
-    ssml = f"""
-    <speak>
-      <voice name="{voice}">
-        <prosody rate="0%" pitch="+5%">
-          {text}
-        </prosody>
-      </voice>
-    </speak>
-    """
-
-    payload = {
-        "model": "gpt-4o-mini-tts",
-        "voice": voice,
-        "input": ssml,
-        "format": fmt
-    }
-
-    resp = requests.post(endpoint, json=payload, headers=headers, stream=False, timeout=60)
+        raise RuntimeError('OpenAI API key not configured')
+    url = 'https://api.openai.com/v1/audio/speech'
+    headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+    payload = {'model': 'gpt-4o-mini-tts', 'voice': voice, 'input': text}
+    resp = requests.post(url, headers=headers, json=payload, stream=True, timeout=60)
     resp.raise_for_status()
-
-    return resp.content, "audio/mpeg"
-
+    audio_bytes = resp.content
+    content_type = 'audio/mpeg' if fmt.lower() in ('mp3','mpeg') else 'audio/webm'
+    return audio_bytes, content_type
 
 
 @app.route('/stream_submit_message', methods=['POST'])
@@ -605,27 +578,29 @@ def stream_submit_message_v1():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
-def ssml_wrap_smooth(text):
+def ssml_wrap(text, rate='0%', pitch='0%', break_ms=250):
+    """Wrap text in a small SSML template to improve TTS prosody.
+    This escapes XML special chars and inserts small breaks after punctuation.
+    If SSML generation fails, return original text.
     """
-    Smooth SSML without inserting random breaks.
-    Keeps phrasing natural and avoids robotic pacing.
-    """
-    def esc(t):
-        return (t.replace("&", "&amp;")
-                 .replace("<", "&lt;")
-                 .replace(">", "&gt;")
-                 .replace('"', "&quot;")
-                 .replace("'", "&apos;"))
+    try:
+        def esc(t):
+            return (t.replace('&', '&amp;')
+                     .replace('<', '&lt;')
+                     .replace('>', '&gt;')
+                     .replace('"', '&quot;')
+                     .replace("'", '&apos;'))
 
-    clean = esc(text)
+        safe_text = esc(text)
+        import re
+        safe_text = re.sub(r'([\.\?\!])\s+', r"\1 <break time=\"%dms\"/> " % break_ms, safe_text)
+        safe_text = re.sub(r',\s+', r', <break time=\"%dms\"/> ' % int(break_ms/2), safe_text)
 
-    return f"""
-    <speak>
-      <prosody rate="0%" pitch="+4%">
-        {clean}
-      </prosody>
-    </speak>
-    """
+        ssml = f"<speak><prosody rate='-{abs(int(rate.strip('%') if isinstance(rate,str) and rate.endswith('%') else 0))}%' pitch='{pitch}'>" + safe_text + "</prosody></speak>"
+        return ssml
+    except Exception as e:
+        print('SSML wrap failed:', str(e))
+        return text
 
 
 def clean_tts_text(text: str) -> str:
