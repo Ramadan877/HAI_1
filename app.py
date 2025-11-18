@@ -567,7 +567,6 @@ def generate_audio(text, output_path):
             model="gpt-4o-mini-tts",
             voice="sol",
             input=ssml_text,
-            input_type="ssml",
             format="mp3"
         )
 
@@ -730,45 +729,72 @@ def stream_submit_message_v1():
         if not user_transcript:
             return "Failed to transcribe message.", 400
 
-        # ----------------------------------------------
-        # META-QUESTION HANDLING (same as submit_message)
-        # ----------------------------------------------
-        if is_meta_question(user_transcript):
-            left = attempts_left(concept_name)
-            if left > 0:
-                response_text = (
-                    f"Yes — please go through the concept of {concept_name} and "
-                    f"explain it in your own words; {format_attempts_left(concept_name)}."
-                )
-            else:
-                response_text = (
-                    f"You’ve already used all 3 tries for {concept_name}. "
-                    f"Let’s move on to the next one."
-                )
+        # # ----------------------------------------------
+        # # META-QUESTION HANDLING (same as submit_message)
+        # # ----------------------------------------------
+        # if is_meta_question(user_transcript):
+        #     left = attempts_left(concept_name)
+        #     if left > 0:
+        #         response_text = (
+        #             f"Yes — please go through the concept of {concept_name} and "
+        #             f"explain it in your own words; {format_attempts_left(concept_name)}."
+        #         )
+        #     else:
+        #         response_text = (
+        #             f"You’ve already used all 3 tries for {concept_name}. "
+        #             f"Let’s move on to the next one."
+        #         )
 
-            # Logging
-            log_interaction("User", concept_name, user_transcript)
-            log_interaction("AI", concept_name, response_text)
-            log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
-            log_interaction_to_db_only("AI", concept_name, response_text, attempt_count)
+        #     # Logging
+        #     log_interaction("User", concept_name, user_transcript)
+        #     log_interaction("AI", concept_name, response_text)
+        #     log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
+        #     log_interaction_to_db_only("AI", concept_name, response_text, attempt_count)
 
-            # Audio
-            folders = get_participant_folder(participant_id, trial_type)
-            ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
-            ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-            generate_audio(response_text, ai_audio_path)
+        #     # Audio
+        #     folders = get_participant_folder(participant_id, trial_type)
+        #     ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
+        #     ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+        #     generate_audio(response_text, ai_audio_path)
 
-            meta = json.dumps({
-                'ai_audio_url': ai_audio_filename,
-                'attempt_count': attempt_count,
-                'response': response_text
-            })
+        #     meta = json.dumps({
+        #         'ai_audio_url': ai_audio_filename,
+        #         'attempt_count': attempt_count,
+        #         'response': response_text
+        #     })
 
-            def generate():
-                yield response_text
-                yield "\n__JSON__START__" + meta + "__JSON__END__\n"
+        #     def generate():
+        #         yield response_text
+        #         yield "\n__JSON__START__" + meta + "__JSON__END__\n"
 
-            return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
+        #     return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
+
+        response = generate_response(
+            user_message=user_transcript,
+            concept_name=concept_name,
+            golden_answer=golden_answer,
+            attempt_count=attempt_count,
+            conversation_history=conversation_history
+        )
+
+        # save logs
+        log_interaction("User", concept_name, user_transcript)
+        log_interaction("AI", concept_name, response)
+        log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
+        log_interaction_to_db_only("AI", concept_name, response, attempt_count)
+
+        # audio
+        folders = get_participant_folder(participant_id, trial_type)
+        ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
+        ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
+        generate_audio(response, ai_audio_path)
+
+        return jsonify({
+            'status': 'success',
+            'response': response,
+            'user_transcript': user_transcript,
+            'ai_audio_url': ai_audio_filename
+        })
 
         # ----------------------------------------------
         # TUTOR LOGIC (V2 ENGINE)
@@ -836,18 +862,18 @@ def stream_submit_message_v1():
         return f"Error: {str(e)}", 500
 
 
-# def ssml_wrap(text):
-#     """Safe SSML wrapper without aggressive prosody manipulation."""
-#     try:
-#         def esc(t):
-#             return (t.replace('&', '&amp;')
-#                      .replace('<', '&lt;')
-#                      .replace('>', '&gt;'))
+def ssml_wrap(text):
+    """Safe SSML wrapper without aggressive prosody manipulation."""
+    try:
+        def esc(t):
+            return (t.replace('&', '&amp;')
+                     .replace('<', '&lt;')
+                     .replace('>', '&gt;'))
 
-#         safe = esc(text)
-#         return f"<speak>{safe}</speak>"
-#     except:
-#         return text
+        safe = esc(text)
+        return f"<speak>{safe}</speak>"
+    except:
+        return text
 
 
 
@@ -891,35 +917,35 @@ def clean_tts_text(text: str) -> str:
 
 
 
-# @app.route('/synthesize', methods=['POST'])
-# def synthesize():
-#     try:
-#         data = request.get_json() or request.form
-#         text = data.get('text') if data else None
-#         if not text:
-#             return jsonify({'error': 'No text provided'}), 400
-#         voice = data.get('voice', 'sol')
-#         fmt = data.get('format', 'mp3')
-#         try:
-#             clean_text = clean_tts_text(text)
-#             ssml_text = ssml_wrap(clean_text, rate='5%', pitch='0%', break_ms=220)
-#             audio_bytes, content_type = synthesize_with_openai(ssml_text, voice=voice, fmt=fmt)
-#             return (audio_bytes, 200, {'Content-Type': content_type, 'Content-Disposition': 'inline; filename="tts.' + fmt + '"'})
-#         except Exception as openai_err:
-#             print('OpenAI TTS failed or rejected SSML, falling back to gTTS:', str(openai_err))
-#         try:
-#             from io import BytesIO
-#             bio = BytesIO()
-#             tts = gTTS(text=clean_text, lang='en')
-#             tts.write_to_fp(bio)
-#             bio.seek(0)
-#             return (bio.read(), 200, {'Content-Type': 'audio/mpeg', 'Content-Disposition': 'inline; filename="tts.mp3"'})
-#         except Exception as e:
-#             print('gTTS fallback failed:', str(e))
-#             return jsonify({'error': 'TTS synthesis failed'}), 500
-#     except Exception as e:
-#         print('Synthesize endpoint error:', str(e))
-#         return jsonify({'error': str(e)}), 500
+@app.route('/synthesize', methods=['POST'])
+def synthesize():
+    try:
+        data = request.get_json() or request.form
+        text = data.get('text') if data else None
+        if not text:
+            return jsonify({'error': 'No text provided'}), 400
+        voice = data.get('voice', 'sol')
+        fmt = data.get('format', 'mp3')
+        try:
+            clean_text = clean_tts_text(text)
+            ssml_text = ssml_wrap(clean_text, rate='5%', pitch='0%', break_ms=220)
+            audio_bytes, content_type = synthesize_with_openai(ssml_text, voice=voice, fmt=fmt)
+            return (audio_bytes, 200, {'Content-Type': content_type, 'Content-Disposition': 'inline; filename="tts.' + fmt + '"'})
+        except Exception as openai_err:
+            print('OpenAI TTS failed or rejected SSML, falling back to gTTS:', str(openai_err))
+        try:
+            from io import BytesIO
+            bio = BytesIO()
+            tts = gTTS(text=clean_text, lang='en')
+            tts.write_to_fp(bio)
+            bio.seek(0)
+            return (bio.read(), 200, {'Content-Type': 'audio/mpeg', 'Content-Disposition': 'inline; filename="tts.mp3"'})
+        except Exception as e:
+            print('gTTS fallback failed:', str(e))
+            return jsonify({'error': 'TTS synthesis failed'}), 500
+    except Exception as e:
+        print('Synthesize endpoint error:', str(e))
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/')
 def home():
@@ -1458,215 +1484,255 @@ def apply_ssml_prosody(text: str) -> str:
     return ssml
 
 
-def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
-    """
-    Unified tutoring logic combining:
-    - V2 pipeline structure (filler → English check → heuristics → GPT)
-    - V1 interaction design (no fake praise, confusion handling, natural tone)
-    - Semantic similarity (OpenAI embeddings)
-    """
-
-    import re
-    import openai
-    import numpy as np
-
-    # -------------------------------------------------
-    # 0. Basic validation
-    # -------------------------------------------------
-    if not golden_answer or not concept_name:
-        return (
-            "I can’t provide feedback yet because the concept context isn’t set. "
-            "Please make sure both the concept and golden answer are defined."
-        )
-
-    # -------------------------------------------------
-    # 1. Filler / unclear message detection (KEEP V1 LOGIC)
-    # -------------------------------------------------
-    def is_filler(s):
-        if not s or not str(s).strip():
-            return True
-        s2 = str(s).strip().lower()
-        fillers = {
-            'ok','okay','yes','no','mm','mmm','hmm','uh','uhh','fine','sure',
-            'i dont know','idk','not sure'
-        }
-        if s2 in fillers:
-            return True
-        if len(s2) < 3:
-            return True
-        if re.match(r'^[\.\,\-\s]+$', s2):
-            return True
-        return False
-
-    if is_filler(user_message):
-        if attempt_count >= 2:
-            return f"{golden_answer} You can now move on to the next concept."
-        return (
-            f"I couldn’t quite understand your explanation — it was too brief. "
-            f"Try explaining {concept_name} in your own words using full sentences."
-        )
-
-    # -------------------------------------------------
-    # 2. English detection
-    # -------------------------------------------------
-    def is_likely_english(text):
-        if not text or not str(text).strip():
-            return False
-        txt = str(text)
-        letters = [c for c in txt if c.isalpha()]
-        if not letters:
-            return bool(re.search(r'[A-Za-z]', txt))
-        total_letters = len(letters)
-        latin = sum(1 for c in letters if 'a' <= c.lower() <= 'z')
-        return (latin / total_letters) >= 0.6
-
-    if not is_likely_english(user_message):
-        return "Please repeat your explanation in English so I can give feedback."
-
-    # -------------------------------------------------
-    # 3. SEMANTIC SIMILARITY via embeddings
-    # -------------------------------------------------
-    def semantic_similarity(a: str, b: str) -> float:
-        try:
-            emb = openai.embeddings.create(
-                model="text-embedding-3-small",
-                input=[a, b]
-            )
-            e1 = np.array(emb.data[0].embedding)
-            e2 = np.array(emb.data[1].embedding)
-            cos_sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
-            return float(max(0, min(1, cos_sim)))
-        except Exception as e:
-            print("Embedding error:", e)
-            return 0.0
-
-    sim = semantic_similarity(user_message, golden_answer)
-
-    if sim >= 0.80:
-        similarity_bucket = "high"
-    elif sim >= 0.55:
-        similarity_bucket = "medium"
-    elif sim >= 0.35:
-        similarity_bucket = "low"
-    else:
-        similarity_bucket = "very_low"
-
-    # -------------------------------------------------
-    # 4. Early acceptance (ONLY if clearly correct)
-    # -------------------------------------------------
-    if sim >= 0.88:
-        if attempt_count >= 2:
-            return f"{golden_answer} You’re correct. You can now move on to the next concept."
-        return "Nice explanation — you’ve captured the essential idea. You can move on to the next concept."
-
-    # -------------------------------------------------
-    # 5. Conversation history block
-    # -------------------------------------------------
-    history_block = ""
-    if conversation_history:
-        history_block = "\n".join(conversation_history[-6:])
-
-    # -------------------------------------------------
-    # 6. NATURAL TUTOR SYSTEM PROMPT (V2 + V1 MERGED)
-    # -------------------------------------------------
+def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history):
     system_prompt = f"""
-You are a friendly, intelligent tutor guiding a student through the concept "{concept_name}"
-as part of a self-explanation learning activity.
+You are an AI tutor for a self-explanation study.
 
-You must ALWAYS respond naturally — like a human tutor — NOT like a scripted rule engine.
+Your responsibilities:
+- Understand the student’s message.
+- Track whether they are progressing.
+- Decide how much feedback to give.
+- Evaluate correctness, give hints, or corrections.
+- Decide whether they should proceed or try again.
+- Adapt to the student’s language ability.
+- Keep explanations short and friendly.
+- Never reveal the full golden answer until the final attempt.
+- If the student is clearly correct, allow progression.
+- If unsure, ask for clarification.
+- If confused, guide gently.
+- If off-topic, bring them back.
+- If in another language ask them to go back to English.
+- Always respond naturally, like a human tutor.
+- 
 
-Follow this interaction model strictly:
-
-1. CLASSIFY THE STUDENT'S MESSAGE INTERNALLY (do NOT say the label):
-   - A genuine attempt to explain the concept,
-   - A sign of confusion (“I don't get it”, “I don’t know what to do”),
-   - A procedural/meta question (“should I explain this?”, “what do I do?”),
-   - Off-topic or unrelated content.
-
-2. GENERAL BEHAVIOR:
-   - Respond in warm, plain English.
-   - Use no more than 3 short sentences.
-   - Never give generic praise when the answer is clearly wrong or very low similarity.
-   - If similarity_bucket = "very_low", treat it as incorrect.
-   - Never say “you’re on the right track” unless the meaning is truly close.
-
-3. ATTEMPT LOGIC:
-   Attempt {attempt_count + 1} of 3.
-   - Attempt 1:
-       If incorrect → gently say it doesn't describe the concept and give ONE broad guiding hint.
-       If partially correct → acknowledge what’s right and point out one missing piece.
-   - Attempt 2:
-       Give clearer guidance but DO NOT reveal the golden answer.
-       Correct ONE key misunderstanding.
-       Ask ONE focused question.
-   - Attempt 3:
-       If correct → confirm and tell them to move to the next concept.
-       If still incorrect → give a brief 1–2 sentence explanation of the concept (paraphrased),
-         then tell them to move to the next concept.
-
-4. CONFUSION:
-   If the student shows confusion:
-       - Normalize their confusion (“It’s okay if this feels unclear.”)
-       - Provide a simple way to start (“Try describing what changes when X changes.”)
-       - Ask ONE guiding question.
-
-5. META QUESTIONS:
-   If the student asks what to do:
-       - Briefly remind them that they should explain the concept in their own words.
-       - Invite them to begin (“You can start by describing…”).
-
-6. OFF-TOPIC ANSWERS:
-   If the answer is unrelated:
-       - Say clearly but kindly that it doesn’t define the concept.
-       - Give ONE sentence about the kind of idea the concept involves.
-       - Ask them to try again with that focus.
-
-Golden Answer (DO NOT reveal before attempt 3):
-{golden_answer}
-
-Similarity bucket: {similarity_bucket}
-
-Recent conversation:
-{history_block if history_block else "(no prior turns)"}
-
-Your response must be a natural-sounding tutor reply,
-following the above rules, no more than 3 short sentences.
+Concept: {concept_name}
+Golden answer: {golden_answer}
+Attempt number: {attempt_count}
+Conversation history:
+{conversation_history}
 """
 
-    # -------------------------------------------------
-    # 7. GPT response generation
-    # -------------------------------------------------
-    user_prompt = f'The student said: "{user_message}". Respond as the tutor.'
-
-    try:
-        result = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            max_tokens=150,
-            temperature=0.55
-        )
-        return result.choices[0].message.content.strip()
-
-    except Exception as e:
-        return f"Error generating AI response: {str(e)}"
+    result = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ],
+        max_tokens=200,
+        temperature=0.7
+    )
+    return result.choices[0].message.content.strip()
 
 
-def is_meta_question(text: str) -> bool:
-    if not text:
-        return False
-    t = text.lower().strip()
+# def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
+#     """
+#     Unified tutoring logic combining:
+#     - V2 pipeline structure (filler → English check → heuristics → GPT)
+#     - V1 interaction design (no fake praise, confusion handling, natural tone)
+#     - Semantic similarity (OpenAI embeddings)
+#     """
 
-    cues = [
-        "do i have to", "should i", "am i supposed to",
-        "do you want me to", "what should i do",
-        "how do i start", "how to proceed",
-        "next step", "what now"
-    ]
+#     import re
+#     import openai
+#     import numpy as np
 
-    return any(c in t for c in cues)
+#     # -------------------------------------------------
+#     # 0. Basic validation
+#     # -------------------------------------------------
+#     if not golden_answer or not concept_name:
+#         return (
+#             "I can’t provide feedback yet because the concept context isn’t set. "
+#             "Please make sure both the concept and golden answer are defined."
+#         )
+
+#     # -------------------------------------------------
+#     # 1. Filler / unclear message detection (KEEP V1 LOGIC)
+#     # -------------------------------------------------
+#     def is_filler(s):
+#         if not s or not str(s).strip():
+#             return True
+#         s2 = str(s).strip().lower()
+#         fillers = {
+#             'ok','okay','yes','no','mm','mmm','hmm','uh','uhh','fine','sure',
+#             'i dont know','idk','not sure'
+#         }
+#         if s2 in fillers:
+#             return True
+#         if len(s2) < 3:
+#             return True
+#         if re.match(r'^[\.\,\-\s]+$', s2):
+#             return True
+#         return False
+
+#     if is_filler(user_message):
+#         if attempt_count >= 2:
+#             return f"{golden_answer} You can now move on to the next concept."
+#         return (
+#             f"I couldn’t quite understand your explanation — it was too brief. "
+#             f"Try explaining {concept_name} in your own words using full sentences."
+#         )
+
+#     # -------------------------------------------------
+#     # 2. English detection
+#     # -------------------------------------------------
+#     def is_likely_english(text):
+#         if not text or not str(text).strip():
+#             return False
+#         txt = str(text)
+#         letters = [c for c in txt if c.isalpha()]
+#         if not letters:
+#             return bool(re.search(r'[A-Za-z]', txt))
+#         total_letters = len(letters)
+#         latin = sum(1 for c in letters if 'a' <= c.lower() <= 'z')
+#         return (latin / total_letters) >= 0.6
+
+#     if not is_likely_english(user_message):
+#         return "Please repeat your explanation in English so I can give feedback."
+
+#     # -------------------------------------------------
+#     # 3. SEMANTIC SIMILARITY via embeddings
+#     # -------------------------------------------------
+#     def semantic_similarity(a: str, b: str) -> float:
+#         try:
+#             emb = openai.embeddings.create(
+#                 model="text-embedding-3-small",
+#                 input=[a, b]
+#             )
+#             e1 = np.array(emb.data[0].embedding)
+#             e2 = np.array(emb.data[1].embedding)
+#             cos_sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
+#             return float(max(0, min(1, cos_sim)))
+#         except Exception as e:
+#             print("Embedding error:", e)
+#             return 0.0
+
+#     sim = semantic_similarity(user_message, golden_answer)
+
+#     if sim >= 0.80:
+#         similarity_bucket = "high"
+#     elif sim >= 0.55:
+#         similarity_bucket = "medium"
+#     elif sim >= 0.35:
+#         similarity_bucket = "low"
+#     else:
+#         similarity_bucket = "very_low"
+
+#     # -------------------------------------------------
+#     # 4. Early acceptance (ONLY if clearly correct)
+#     # -------------------------------------------------
+#     if sim >= 0.88:
+#         if attempt_count >= 2:
+#             return f"{golden_answer} You’re correct. You can now move on to the next concept."
+#         return "Nice explanation — you’ve captured the essential idea. You can move on to the next concept."
+
+#     # -------------------------------------------------
+#     # 5. Conversation history block
+#     # -------------------------------------------------
+#     history_block = ""
+#     if conversation_history:
+#         history_block = "\n".join(conversation_history[-6:])
+
+#     # -------------------------------------------------
+#     # 6. NATURAL TUTOR SYSTEM PROMPT (V2 + V1 MERGED)
+#     # -------------------------------------------------
+#     system_prompt = f"""
+# You are a friendly, intelligent tutor guiding a student through the concept "{concept_name}"
+# as part of a self-explanation learning activity.
+
+# You must ALWAYS respond naturally — like a human tutor — NOT like a scripted rule engine.
+
+# Follow this interaction model strictly:
+
+# 1. CLASSIFY THE STUDENT'S MESSAGE INTERNALLY (do NOT say the label):
+#    - A genuine attempt to explain the concept,
+#    - A sign of confusion (“I don't get it”, “I don’t know what to do”),
+#    - A procedural/meta question (“should I explain this?”, “what do I do?”),
+#    - Off-topic or unrelated content.
+
+# 2. GENERAL BEHAVIOR:
+#    - Respond in warm, plain English.
+#    - Use no more than 3 short sentences.
+#    - Never give generic praise when the answer is clearly wrong or very low similarity.
+#    - If similarity_bucket = "very_low", treat it as incorrect.
+#    - Never say “you’re on the right track” unless the meaning is truly close.
+
+# 3. ATTEMPT LOGIC:
+#    Attempt {attempt_count + 1} of 3.
+#    - Attempt 1:
+#        If incorrect → gently say it doesn't describe the concept and give ONE broad guiding hint.
+#        If partially correct → acknowledge what’s right and point out one missing piece.
+#    - Attempt 2:
+#        Give clearer guidance but DO NOT reveal the golden answer.
+#        Correct ONE key misunderstanding.
+#        Ask ONE focused question.
+#    - Attempt 3:
+#        If correct → confirm and tell them to move to the next concept.
+#        If still incorrect → give a brief 1–2 sentence explanation of the concept (paraphrased),
+#          then tell them to move to the next concept.
+
+# 4. CONFUSION:
+#    If the student shows confusion:
+#        - Normalize their confusion (“It’s okay if this feels unclear.”)
+#        - Provide a simple way to start (“Try describing what changes when X changes.”)
+#        - Ask ONE guiding question.
+
+# 5. META QUESTIONS:
+#    If the student asks what to do:
+#        - Briefly remind them that they should explain the concept in their own words.
+#        - Invite them to begin (“You can start by describing…”).
+
+# 6. OFF-TOPIC ANSWERS:
+#    If the answer is unrelated:
+#        - Say clearly but kindly that it doesn’t define the concept.
+#        - Give ONE sentence about the kind of idea the concept involves.
+#        - Ask them to try again with that focus.
+
+# Golden Answer (DO NOT reveal before attempt 3):
+# {golden_answer}
+
+# Similarity bucket: {similarity_bucket}
+
+# Recent conversation:
+# {history_block if history_block else "(no prior turns)"}
+
+# Your response must be a natural-sounding tutor reply,
+# following the above rules, no more than 3 short sentences.
+# """
+
+#     # -------------------------------------------------
+#     # 7. GPT response generation
+#     # -------------------------------------------------
+#     user_prompt = f'The student said: "{user_message}". Respond as the tutor.'
+
+#     try:
+#         result = openai.ChatCompletion.create(
+#             model="gpt-4o-mini",
+#             messages=[
+#                 {"role": "system", "content": system_prompt},
+#                 {"role": "user", "content": user_prompt}
+#             ],
+#             max_tokens=150,
+#             temperature=0.55
+#         )
+#         return result.choices[0].message.content.strip()
+
+#     except Exception as e:
+#         return f"Error generating AI response: {str(e)}"
+
+
+# def is_meta_question(text: str) -> bool:
+#     if not text:
+#         return False
+#     t = text.lower().strip()
+
+#     cues = [
+#         "do i have to", "should i", "am i supposed to",
+#         "do you want me to", "what should i do",
+#         "how do i start", "how to proceed",
+#         "next step", "what now"
+#     ]
+
+#     return any(c in t for c in cues)
 
 
 def detect_language_openai(text: str) -> str:
