@@ -515,61 +515,23 @@ def get_audio_filename(prefix, participant_id, interaction_number, extension='.m
 
 def generate_audio(text, output_path):
     """
-    Generate energetic, hyped tutor speech using SOL voice with SSML prosody.
-    Falls back to gTTS if needed.
+    Generate speech with SOL voice using minimal SSML,
+    to avoid artificial pauses. Falls back to gTTS if needed.
     """
-
-    import openai
-    from gtts import gTTS
-    import os
     import html
+    from gtts import gTTS
 
-    # ----------------------------------------
-    # Helper: Strong energetic SSML wrapper
-    # ----------------------------------------
-    def wrap_hyped_sol_ssml(raw_text):
-        safe = html.escape(raw_text)
-        return f"""
-<speak>
-  <prosody pitch="+15%" rate="108%">
-      <emphasis level="strong">
-          {safe}
-      </emphasis>
-  </prosody>
-</speak>
-""".strip()
-
-    # ----------------------------------------
-    # 1. Clean incoming text
-    # ----------------------------------------
     cleaned = clean_tts_text(text)
-
-    # ----------------------------------------
-    # 2. Add “hyped tutor” instructions 
-    #    (this shapes the semantic personality)
-    # ----------------------------------------
-    hyped_text = (
-        "Speak in an enthusiastic, energetic, upbeat, friendly tutor voice with positive energy. "
-        "Keep your pacing smooth and natural without long pauses. Now say this: "
-        + cleaned
-    )
-
-    # ----------------------------------------
-    # 3. Build SSML for SOL
-    # ----------------------------------------
-    ssml_text = wrap_hyped_sol_ssml(hyped_text)
+    ssml = f"<speak>{html.escape(cleaned)}</speak>"
 
     try:
-        # ----------------------------------------
-        # 4. OpenAI TTS (SOL voice)
-        # ----------------------------------------
+        # OpenAI TTS with SOL
         response = openai.audio.speech.create(
             model="gpt-4o-mini-tts",
             voice="sol",
-            input=ssml_text,
+            input=ssml,
             format="mp3"
         )
-
         audio_bytes = response.read()
 
         with open(output_path, "wb") as f:
@@ -581,13 +543,9 @@ def generate_audio(text, output_path):
         print("OpenAI TTS failed, falling back to gTTS:", e)
 
         try:
-            # ----------------------------------------
-            # 5. Fallback TTS
-            # ----------------------------------------
             tts = gTTS(cleaned, lang="en", slow=False)
             tts.save(output_path)
             return True
-
         except Exception as e2:
             print("gTTS also failed:", e2)
             return False
@@ -634,35 +592,25 @@ def health_check():
 
 def synthesize_with_openai(text, voice='sol', fmt='mp3'):
     """
-    Unified OpenAI TTS — same hyped voice as generate_audio()
+    Unified OpenAI TTS with SOL.
+    Takes plain text, wraps it once in SSML, no manual breaks.
     """
     import html
     api_key = os.environ.get('OPENAI_API_KEY')
     if not api_key:
         raise RuntimeError('OpenAI API key not configured')
 
-    # 1) Hyped wrapper
-    hyped = (
-        "Speak with high energy, enthusiasm, upbeat tone, friendly tutor style. "
-        "Now say this:\n" + text
-    )
+    cleaned = clean_tts_text(text)
+    ssml = f"<speak>{html.escape(cleaned)}</speak>"
 
-    # 2) SSML wrapper
-    safe = html.escape(hyped)
-    ssml = f"""
-<speak>
-  <prosody rate="95%" pitch="+4%">
-    {safe.replace('.', '<break time="250ms"/>')}
-  </prosody>
-</speak>
-""".strip()
-
-    # 3) OpenAI TTS
     url = 'https://api.openai.com/v1/audio/speech'
-    headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json'
+    }
     payload = {
         'model': 'gpt-4o-mini-tts',
-        'voice': 'sol',
+        'voice': voice,
         'input': ssml,
         'format': fmt,
     }
@@ -675,10 +623,9 @@ def synthesize_with_openai(text, voice='sol', fmt='mp3'):
     return audio_bytes, content_type
 
 
-
 @app.route('/stream_submit_message_v1', methods=['POST'])
 def stream_submit_message_v1():
-    """Streaming version of the tutor response using the full V2 logic."""
+    """Streaming version of the tutor response using unified logic."""
     try:
         participant_id = session.get('participant_id')
         trial_type = session.get('trial_type')
@@ -686,6 +633,9 @@ def stream_submit_message_v1():
         if not participant_id or not trial_type:
             return "Session error: Missing participant or trial type.", 400
 
+        # -----------------------------------
+        # 1. Resolve concept
+        # -----------------------------------
         concept_name = request.form.get('concept_name', '').strip()
         concepts = load_concepts()
 
@@ -696,14 +646,18 @@ def stream_submit_message_v1():
         concept_name = matched
         golden_answer = concepts[concept_name]['golden_answer']
 
-        # Attempts + history
+        # -----------------------------------
+        # 2. Load attempts + history
+        # -----------------------------------
         concept_attempts = session.get('concept_attempts', {})
         attempt_count = concept_attempts.get(concept_name, 0)
 
         conv_store = session.get('conversation_history', {})
         conversation_history = conv_store.get(concept_name, [])
 
-        # Get transcript
+        # -----------------------------------
+        # 3. Get transcript
+        # -----------------------------------
         user_transcript = request.form.get('message', '').strip()
         if not user_transcript and 'audio' not in request.files:
             return "No input detected", 400
@@ -729,46 +683,9 @@ def stream_submit_message_v1():
         if not user_transcript:
             return "Failed to transcribe message.", 400
 
-        # # ----------------------------------------------
-        # # META-QUESTION HANDLING (same as submit_message)
-        # # ----------------------------------------------
-        # if is_meta_question(user_transcript):
-        #     left = attempts_left(concept_name)
-        #     if left > 0:
-        #         response_text = (
-        #             f"Yes — please go through the concept of {concept_name} and "
-        #             f"explain it in your own words; {format_attempts_left(concept_name)}."
-        #         )
-        #     else:
-        #         response_text = (
-        #             f"You’ve already used all 3 tries for {concept_name}. "
-        #             f"Let’s move on to the next one."
-        #         )
-
-        #     # Logging
-        #     log_interaction("User", concept_name, user_transcript)
-        #     log_interaction("AI", concept_name, response_text)
-        #     log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
-        #     log_interaction_to_db_only("AI", concept_name, response_text, attempt_count)
-
-        #     # Audio
-        #     folders = get_participant_folder(participant_id, trial_type)
-        #     ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
-        #     ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-        #     generate_audio(response_text, ai_audio_path)
-
-        #     meta = json.dumps({
-        #         'ai_audio_url': ai_audio_filename,
-        #         'attempt_count': attempt_count,
-        #         'response': response_text
-        #     })
-
-        #     def generate():
-        #         yield response_text
-        #         yield "\n__JSON__START__" + meta + "__JSON__END__\n"
-
-        #     return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
-
+        # -----------------------------------
+        # 4. Generate tutor reply (LLM)
+        # -----------------------------------
         response = generate_response(
             user_message=user_transcript,
             concept_name=concept_name,
@@ -777,39 +694,9 @@ def stream_submit_message_v1():
             conversation_history=conversation_history
         )
 
-        # save logs
-        log_interaction("User", concept_name, user_transcript)
-        log_interaction("AI", concept_name, response)
-        log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
-        log_interaction_to_db_only("AI", concept_name, response, attempt_count)
-
-        # audio
-        folders = get_participant_folder(participant_id, trial_type)
-        ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
-        ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-        generate_audio(response, ai_audio_path)
-
-        return jsonify({
-            'status': 'success',
-            'response': response,
-            'user_transcript': user_transcript,
-            'ai_audio_url': ai_audio_filename
-        })
-
-        # ----------------------------------------------
-        # TUTOR LOGIC (V2 ENGINE)
-        # ----------------------------------------------
-        response_text = generate_response(
-            user_message=user_transcript,
-            concept_name=concept_name,
-            golden_answer=golden_answer,
-            attempt_count=attempt_count,
-            conversation_history=conversation_history
-        )
-
-        # ----------------------------------------------
-        # ATTEMPT LOGIC (same as submit_message)
-        # ----------------------------------------------
+        # -----------------------------------
+        # 5. Compute new attempt count
+        # -----------------------------------
         import re
         from difflib import SequenceMatcher
 
@@ -826,36 +713,35 @@ def stream_submit_message_v1():
         session['concept_attempts'][concept_name] = new_attempt
         session.modified = True
 
-        # ----------------------------------------------
-        # LOGGING (file + DB)
-        # ----------------------------------------------
+        # -----------------------------------
+        # 6. Logging
+        # -----------------------------------
         log_interaction("User", concept_name, user_transcript)
-        log_interaction("AI", concept_name, response_text)
-        log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
-        log_interaction_to_db_only("AI", concept_name, response_text, new_attempt)
+        log_interaction("AI", concept_name, response)
+        log_interaction_to_db_only("USER", concept_name, user_transcript, new_attempt)
+        log_interaction_to_db_only("AI", concept_name, response, new_attempt)
 
-        # ----------------------------------------------
-        # AUDIO GENERATION
-        # ----------------------------------------------
+        # -----------------------------------
+        # 7. Generate audio
+        # -----------------------------------
         folders = get_participant_folder(participant_id, trial_type)
         ai_audio_filename = get_audio_filename('ai', participant_id, new_attempt)
         ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-        generate_audio(response_text, ai_audio_path)
+        generate_audio(response, ai_audio_path)
 
-        # ----------------------------------------------
-        # STREAM TO FRONTEND
-        # ----------------------------------------------
-        meta = json.dumps({
-            'ai_audio_url': ai_audio_filename,
-            'attempt_count': new_attempt,
-            'response': response_text
-        })
+        # -----------------------------------
+        # 8. Return JSON payload
+        # -----------------------------------
+        payload = {
+            "status": "success",
+            "response": response,
+            "user_transcript": user_transcript,
+            "ai_audio_url": ai_audio_filename,
+            "attempt_count": new_attempt,
+            "should_move_to_next": (new_attempt >= 3)
+        }
 
-        def generate():
-            yield response_text
-            yield "\n__JSON__START__" + meta + "__JSON__END__\n"
-
-        return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
+        return jsonify(payload)
 
     except Exception as e:
         print("Error in stream_submit_message_v1:", str(e))
@@ -879,15 +765,18 @@ def ssml_wrap(text):
 
 def clean_tts_text(text: str) -> str:
     """
-    Smooth TTS by reducing unnatural pauses and improving flow.
-    Designed for gTTS and OpenAI TTS.
+    Light cleanup for TTS:
+    - remove URLs / markdown junk
+    - normalize whitespace
+    - ensure it ends with a sentence terminator
+    NO punctuation rewriting, NO artificial breaks.
     """
     import re
 
     if not text:
         return ""
 
-    # Strip markdown, urls and formatting garbage
+    # Strip URLs and markdown-ish characters
     text = re.sub(r'http\S+', '', text)
     text = re.sub(r'[*_#`~<>^{}\[\]|]', '', text)
     text = re.sub(r'[\\/]', ' ', text)
@@ -895,26 +784,11 @@ def clean_tts_text(text: str) -> str:
     # Normalize spaces
     text = re.sub(r'\s+', ' ', text).strip()
 
-    # Reduce long punctuation pauses
-    text = text.replace("...", ".").replace("..", ".")
-
-    # Convert mid-sentence periods → commas (reduces pauses)
-    text = re.sub(r'\.\s+(?=[a-zA-Z])', ', ', text)
-
-    # Avoid double commas or weird spacing
-    text = re.sub(r',\s*,', ', ', text)
-
-    # Fix negative numbers ("-1" → "negative one")
-    text = re.sub(r'(?<!\d)-(?=\d)', 'NEGATIVE_SIGN_PLACEHOLDER', text)
-    text = re.sub(r'\b-(\d+)\b', r'negative \1', text)
-    text = text.replace("NEGATIVE_SIGN_PLACEHOLDER", " negative ")
-
-    # Ensure clean ending
-    if not text.endswith(('.', '!', '?')):
-        text += "."
+    # Ensure it ends like a sentence
+    if text and not text.endswith(('.', '!', '?')):
+        text += '.'
 
     return text
-
 
 
 @app.route('/synthesize', methods=['POST'])
@@ -924,28 +798,48 @@ def synthesize():
         text = data.get('text') if data else None
         if not text:
             return jsonify({'error': 'No text provided'}), 400
+
         voice = data.get('voice', 'sol')
         fmt = data.get('format', 'mp3')
+
         try:
             clean_text = clean_tts_text(text)
-            ssml_text = ssml_wrap(clean_text, rate='5%', pitch='0%', break_ms=220)
-            audio_bytes, content_type = synthesize_with_openai(ssml_text, voice=voice, fmt=fmt)
-            return (audio_bytes, 200, {'Content-Type': content_type, 'Content-Disposition': 'inline; filename="tts.' + fmt + '"'})
+            audio_bytes, content_type = synthesize_with_openai(clean_text, voice=voice, fmt=fmt)
+            return (
+                audio_bytes,
+                200,
+                {
+                    'Content-Type': content_type,
+                    'Content-Disposition': f'inline; filename="tts.{fmt}"'
+                }
+            )
         except Exception as openai_err:
-            print('OpenAI TTS failed or rejected SSML, falling back to gTTS:', str(openai_err))
+            print('OpenAI TTS failed, falling back to gTTS:', str(openai_err))
+
+        # Fallback: gTTS
         try:
             from io import BytesIO
+            clean_text = clean_tts_text(text)
             bio = BytesIO()
             tts = gTTS(text=clean_text, lang='en')
             tts.write_to_fp(bio)
             bio.seek(0)
-            return (bio.read(), 200, {'Content-Type': 'audio/mpeg', 'Content-Disposition': 'inline; filename="tts.mp3"'})
+            return (
+                bio.read(),
+                200,
+                {
+                    'Content-Type': 'audio/mpeg',
+                    'Content-Disposition': 'inline; filename="tts.mp3"'
+                }
+            )
         except Exception as e:
             print('gTTS fallback failed:', str(e))
             return jsonify({'error': 'TTS synthesis failed'}), 500
+
     except Exception as e:
         print('Synthesize endpoint error:', str(e))
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/')
 def home():
