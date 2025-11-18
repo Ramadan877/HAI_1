@@ -613,17 +613,47 @@ def health_check():
 
 
 def synthesize_with_openai(text, voice='sol', fmt='mp3'):
+    """
+    Unified OpenAI TTS — same hyped voice as generate_audio()
+    """
+    import html
     api_key = os.environ.get('OPENAI_API_KEY')
     if not api_key:
         raise RuntimeError('OpenAI API key not configured')
+
+    # 1) Hyped wrapper
+    hyped = (
+        "Speak with high energy, enthusiasm, upbeat tone, friendly tutor style. "
+        "Now say this:\n" + text
+    )
+
+    # 2) SSML wrapper
+    safe = html.escape(hyped)
+    ssml = f"""
+<speak>
+  <prosody rate="95%" pitch="+4%">
+    {safe.replace('.', '<break time="250ms"/>')}
+  </prosody>
+</speak>
+""".strip()
+
+    # 3) OpenAI TTS
     url = 'https://api.openai.com/v1/audio/speech'
     headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
-    payload = {'model': 'gpt-4o-mini-tts', 'voice': voice, 'input': text}
+    payload = {
+        'model': 'gpt-4o-mini-tts',
+        'voice': 'sol',
+        'input': ssml,
+        'format': fmt,
+    }
+
     resp = requests.post(url, headers=headers, json=payload, stream=True, timeout=60)
     resp.raise_for_status()
+
     audio_bytes = resp.content
-    content_type = 'audio/mpeg' if fmt.lower() in ('mp3','mpeg') else 'audio/webm'
+    content_type = 'audio/mpeg' if fmt.lower() in ('mp3', 'mpeg') else 'audio/webm'
     return audio_bytes, content_type
+
 
 
 @app.route('/stream_submit_message_v1', methods=['POST'])
