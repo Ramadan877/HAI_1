@@ -1315,16 +1315,51 @@ def submit_message():
         }), 500
 
 
+# ------------------------------------------------------------
+# SEMANTIC SIMILARITY (Replacement for SequenceMatcher)
+# ------------------------------------------------------------
+
+import openai
+import numpy as np
+
+def semantic_similarity(a: str, b: str) -> float:
+    """
+    Uses OpenAI embeddings to compute real semantic similarity.
+    Much more natural than keyword/character similarity.
+    Output: 0.0 – 1.0
+    """
+
+    if not a or not b:
+        return 0.0
+
+    try:
+        emb = openai.embeddings.create(
+            model="text-embedding-3-small",
+            input=[a, b]
+        )
+
+        e1 = np.array(emb.data[0].embedding)
+        e2 = np.array(emb.data[1].embedding)
+
+        cos_sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
+        return float(max(0, min(1, cos_sim)))
+
+    except Exception as e:
+        print("Embedding error:", e)
+        return 0.0
+
+
 def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
     """
     Unified tutoring logic combining:
-    - V2 pipeline structure (filler, English check, heuristics, then GPT)
-    - V1 interaction design (no fake praise, attempt-aware guidance, confusion/off-topic handling)
+    - V2 pipeline structure (filler → English check → heuristics → GPT)
+    - V1 interaction design (no fake praise, confusion handling, natural tone)
+    - Semantic similarity (OpenAI embeddings)
     """
 
     import re
     import openai
-    from difflib import SequenceMatcher
+    import numpy as np
 
     # -------------------------------------------------
     # 0. Basic validation
@@ -1336,7 +1371,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         )
 
     # -------------------------------------------------
-    # 1. Filler / unclear message detection (KEEP OLD LOGIC)
+    # 1. Filler / unclear message detection (KEEP V1 LOGIC)
     # -------------------------------------------------
     def is_filler(s):
         if not s or not str(s).strip():
@@ -1355,17 +1390,15 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         return False
 
     if is_filler(user_message):
-        # On last attempt, just give the golden answer and move on
         if attempt_count >= 2:
             return f"{golden_answer} You can now move on to the next concept."
-        # Otherwise ask for a fuller explanation
         return (
             f"I couldn’t quite understand your explanation — it was too brief. "
-            f"Please try explaining {concept_name} in complete sentences."
+            f"Try explaining {concept_name} in your own words using full sentences."
         )
 
     # -------------------------------------------------
-    # 2. English detection (V2 logic + V1 strictness)
+    # 2. English detection
     # -------------------------------------------------
     def is_likely_english(text):
         if not text or not str(text).strip():
@@ -1373,197 +1406,142 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         txt = str(text)
         letters = [c for c in txt if c.isalpha()]
         if not letters:
-            # fallback for numbers/punctuation
             return bool(re.search(r'[A-Za-z]', txt))
         total_letters = len(letters)
-        latin_letters = sum(1 for c in letters if 'a' <= c.lower() <= 'z')
-        return (latin_letters / total_letters) >= 0.6
+        latin = sum(1 for c in letters if 'a' <= c.lower() <= 'z')
+        return (latin / total_letters) >= 0.6
 
-    # Quick heuristic first
     if not is_likely_english(user_message):
-        # Optional: you could fall back to detect_language_openai here if you want
-        # lang = detect_language_openai(user_message)
-        # if lang != "english" and lang != "unknown":
         return "Please repeat your explanation in English so I can give feedback."
 
     # -------------------------------------------------
-    # 3. Heuristic correctness check (KEEP OLD LOGIC)
+    # 3. SEMANTIC SIMILARITY via embeddings
     # -------------------------------------------------
-    def normalize(text):
-        return re.sub(r'[^a-z0-9\s]', '', text.lower().strip())
+    def semantic_similarity(a: str, b: str) -> float:
+        try:
+            emb = openai.embeddings.create(
+                model="text-embedding-3-small",
+                input=[a, b]
+            )
+            e1 = np.array(emb.data[0].embedding)
+            e2 = np.array(emb.data[1].embedding)
+            cos_sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
+            return float(max(0, min(1, cos_sim)))
+        except Exception as e:
+            print("Embedding error:", e)
+            return 0.0
 
-    user_norm = normalize(user_message)
-    golden_norm = normalize(golden_answer)
+    sim = semantic_similarity(user_message, golden_answer)
 
-    # Character-based similarity
-    similarity = SequenceMatcher(
-        None,
-        user_norm,
-        golden_norm
-    ).ratio()
-
-    # Token overlap
-    def token_overlap(a, b):
-        toks_a = a.split()
-        toks_b = b.split()
-        if not toks_a or not toks_b:
-            return 0
-        set_a = set(toks_a)
-        set_b = set(toks_b)
-        return len(set_a & set_b) / max(1, len(set_a))
-
-    overlap = token_overlap(user_norm, golden_norm)
-
-    # Simple bucket for similarity to feed into GPT
-    if similarity >= 0.8:
+    if sim >= 0.80:
         similarity_bucket = "high"
-    elif similarity >= 0.5:
+    elif sim >= 0.55:
         similarity_bucket = "medium"
-    elif similarity >= 0.25:
+    elif sim >= 0.35:
         similarity_bucket = "low"
     else:
         similarity_bucket = "very_low"
 
-    # correlation keyword heuristic (special case for your concepts)
-    kw = user_message.lower()
-    has_corr = 'correlation' in kw or 'correlat' in kw
-    has_nums = any(n in kw for n in ['-1', '1', '0', 'negative', 'positive'])
-    mentions_causation = 'caus' in kw
-
-    heuristically_correct = (
-        similarity >= 0.78
-        or overlap >= 0.5
-        or (has_corr and (has_nums or mentions_causation))
-    )
-
     # -------------------------------------------------
-    # 4. If heuristically correct BEFORE GPT → accept it
+    # 4. Early acceptance (ONLY if clearly correct)
     # -------------------------------------------------
-    if heuristically_correct:
-        # On 3rd attempt (attempt_count >= 2), you allow revealing the golden answer
+    if sim >= 0.88:
         if attempt_count >= 2:
             return f"{golden_answer} You’re correct. You can now move on to the next concept."
-        # Earlier attempts: confirm and tell them to move on
-        return (
-            "Great job — your explanation captures the essential meaning. "
-            "You can move on to the next concept."
-        )
+        return "Nice explanation — you’ve captured the essential idea. You can move on to the next concept."
 
     # -------------------------------------------------
-    # 5. Build conversation context for natural GPT response
+    # 5. Conversation history block
     # -------------------------------------------------
     history_block = ""
     if conversation_history:
         history_block = "\n".join(conversation_history[-6:])
 
     # -------------------------------------------------
-    # 6. NATURAL TUTOR SYSTEM PROMPT (V2 STRUCTURE + V1 BEHAVIOR)
+    # 6. NATURAL TUTOR SYSTEM PROMPT (V2 + V1 MERGED)
     # -------------------------------------------------
     system_prompt = f"""
-You are a tutoring agent in a self-explanation exercise on research methods.
+You are a friendly, intelligent tutor guiding a student through the concept "{concept_name}"
+as part of a self-explanation learning activity.
 
-The student is working on this concept:
-- Concept name: {concept_name}
+You must ALWAYS respond naturally — like a human tutor — NOT like a scripted rule engine.
 
-Target expert explanation ("golden answer"):
-- Golden answer: {golden_answer}
+Follow this interaction model strictly:
 
-Heuristic info about the current answer:
-- Similarity bucket: {similarity_bucket}
-- Raw similarity score: {similarity:.2f}
-- Token overlap: {overlap:.2f}
-- Current attempt number (1-based): {attempt_count + 1} of 3
+1. CLASSIFY THE STUDENT'S MESSAGE INTERNALLY (do NOT say the label):
+   - A genuine attempt to explain the concept,
+   - A sign of confusion (“I don't get it”, “I don’t know what to do”),
+   - A procedural/meta question (“should I explain this?”, “what do I do?”),
+   - Off-topic or unrelated content.
 
-Recent conversation (if any):
+2. GENERAL BEHAVIOR:
+   - Respond in warm, plain English.
+   - Use no more than 3 short sentences.
+   - Never give generic praise when the answer is clearly wrong or very low similarity.
+   - If similarity_bucket = "very_low", treat it as incorrect.
+   - Never say “you’re on the right track” unless the meaning is truly close.
+
+3. ATTEMPT LOGIC:
+   Attempt {attempt_count + 1} of 3.
+   - Attempt 1:
+       If incorrect → gently say it doesn't describe the concept and give ONE broad guiding hint.
+       If partially correct → acknowledge what’s right and point out one missing piece.
+   - Attempt 2:
+       Give clearer guidance but DO NOT reveal the golden answer.
+       Correct ONE key misunderstanding.
+       Ask ONE focused question.
+   - Attempt 3:
+       If correct → confirm and tell them to move to the next concept.
+       If still incorrect → give a brief 1–2 sentence explanation of the concept (paraphrased),
+         then tell them to move to the next concept.
+
+4. CONFUSION:
+   If the student shows confusion:
+       - Normalize their confusion (“It’s okay if this feels unclear.”)
+       - Provide a simple way to start (“Try describing what changes when X changes.”)
+       - Ask ONE guiding question.
+
+5. META QUESTIONS:
+   If the student asks what to do:
+       - Briefly remind them that they should explain the concept in their own words.
+       - Invite them to begin (“You can start by describing…”).
+
+6. OFF-TOPIC ANSWERS:
+   If the answer is unrelated:
+       - Say clearly but kindly that it doesn’t define the concept.
+       - Give ONE sentence about the kind of idea the concept involves.
+       - Ask them to try again with that focus.
+
+Golden Answer (DO NOT reveal before attempt 3):
+{golden_answer}
+
+Similarity bucket: {similarity_bucket}
+
+Recent conversation:
 {history_block if history_block else "(no prior turns)"}
 
-INTERACTION DESIGN (you must follow this very strictly):
-
-1. First, internally classify the student's message (do NOT mention the label):
-   - A genuine attempt to explain the concept,
-   - An expression of confusion or inability (e.g. "I don't know", "I can't explain this",
-     "I don't think we can explain this", "I have no idea"),
-   - A procedural/meta question about the task (e.g. "what should I do?", "should I explain this?"),
-   - Off-topic or answering a different question (e.g. talking about the cause of death
-     instead of what a moderator is).
-
-2. General style:
-   - Respond in plain English only.
-   - Use at most 3 short sentences.
-   - Be warm and supportive, but not overly enthusiastic or chatty.
-   - Focus on the current concept, not on storytelling details.
-   - Avoid generic filler like "you're on the right track" or "good job" if the answer is clearly wrong,
-     off-topic, or the student says they cannot explain.
-   - If the similarity bucket is "very_low", do NOT say they are correct or "on the right track".
-
-3. Attempt logic:
-   - Attempt 1 (attempt_count = 0):
-       * If the explanation is incorrect or off-topic:
-           - Clearly but gently explain that it does not yet describe what the concept means.
-           - Give ONE broad, simple hint about what type of relationship or variable they should think about.
-           - Ask ONE guiding question to help them try again.
-       * If partially correct:
-           - Briefly name what is right.
-           - Point to ONE important missing aspect with a hint.
-           - Ask ONE guiding question.
-   - Attempt 2 (attempt_count = 1):
-       * If still incomplete or confused:
-           - Be a bit more explicit about what is missing, but DO NOT reveal the full golden answer.
-           - Correct one key misunderstanding if present.
-           - Ask ONE focused question that pushes them closer to the correct idea.
-       * If mostly correct:
-           - Confirm that the core idea is right and suggest they refine one small point.
-   - Attempt 3 (attempt_count = 2):
-       * If the explanation is now basically correct:
-           - Briefly confirm that and tell them they can move on to the next concept.
-       * If still clearly incorrect, very low similarity, or completely off-topic:
-           - Briefly provide the correct core idea of the concept in 1–2 sentences.
-           - Then explicitly tell them they can move on to the next concept.
-
-4. Special cases:
-   - If the student expresses confusion or inability ("I don't know", "we can't explain this", etc.):
-       * Acknowledge that it is okay not to know yet.
-       * Do NOT praise their explanation (because they did not really explain).
-       * Give them a very simple entry point (e.g. "You can start by saying what changes when X changes")
-         and ask ONE guiding question.
-   - If the message is mostly procedural/meta ("what should I do now?", "do I have to explain this?"):
-       * Briefly remind them of the task: they should explain the concept in their own words.
-       * Invite them to start, and give ONE concrete suggestion for how to begin their explanation.
-   - If the answer is off-topic (e.g. discussing cause of death instead of what a moderator is):
-       * Say clearly but gently that this does not really define the concept.
-       * Redirect them by stating in one sentence what kind of relationship/variable the concept is about.
-       * Ask them to try again with that focus.
-
-5. Golden answer visibility:
-   - Never quote or fully reveal the golden answer text before attempt 3.
-   - On attempt 3, if the student is still wrong, you may summarize the core idea of the golden answer
-     in your own words, then tell them to move on.
-
-Your response:
-- Must follow these rules.
-- Must be a single short paragraph (up to 3 sentences).
-- Must NOT mention "similarity", "bucket", "heuristics", or "attempt count" explicitly.
+Your response must be a natural-sounding tutor reply,
+following the above rules, no more than 3 short sentences.
 """
 
     # -------------------------------------------------
-    # 7. User message fed into GPT for semantic evaluation
+    # 7. GPT response generation
     # -------------------------------------------------
     user_prompt = f'The student said: "{user_message}". Respond as the tutor.'
 
     try:
-        response = openai.ChatCompletion.create(
+        result = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user",  "content": user_prompt}
+                {"role": "user", "content": user_prompt}
             ],
             max_tokens=150,
             temperature=0.55
         )
-        return response.choices[0].message.content.strip()
+        return result.choices[0].message.content.strip()
 
     except Exception as e:
-        # Fallback in case the API fails
         return f"Error generating AI response: {str(e)}"
 
 
