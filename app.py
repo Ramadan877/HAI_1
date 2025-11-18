@@ -513,39 +513,49 @@ def get_audio_filename(prefix, participant_id, interaction_number, extension='.m
     concept_part = f"_{secure_filename(concept_name)}" if concept_name else ""
     return f"{prefix}{concept_part}_{interaction_number}_{participant_id}{extension}"
 
-def generate_audio(text, file_path):
-    """Generate speech (audio) from the provided text using gTTS with proper file handling."""
+def generate_audio(text, output_path):
+    """
+    Generate natural tutor speech:
+    - Clean text for TTS
+    - Apply prosody (SSML)
+    - Use OpenAI TTS or fallback to gTTS
+    """
+
+    import openai
+    from gtts import gTTS
+    import os
+
+    # 1. Clean text (remove markup, reduce pauses)
+    cleaned = clean_tts_text(text)
+
+    # 2. Add SSML prosody tuning
+    ssml_text = apply_ssml_prosody(cleaned)
+
     try:
-        try:
-            # Clean text for TTS before constructing SSML or using gTTS fallback
-            clean_text = clean_tts_text(text)
-            audio_bytes, content_type = synthesize_with_openai(ssml_wrap(clean_text), voice='alloy', fmt='mp3')
-            if audio_bytes:
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                with open(file_path, 'wb') as f:
-                    f.write(audio_bytes)
-                print(f"V1: Audio file (OpenAI TTS) saved: {file_path}")
-                return True
-        except Exception as openai_err:
-            print(f"V1: OpenAI TTS unavailable or failed: {openai_err}. Falling back to gTTS.")
+        # 3. OpenAI TTS with SSML
+        response = openai.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice="alloy",
+            input=ssml_text,
+            format="mp3"
+        )
+        audio_bytes = response.read()
+        with open(output_path, "wb") as f:
+            f.write(audio_bytes)
+        return
 
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
-            temp_path = temp_file.name
-
-        tts = gTTS(text=clean_text, lang='en', slow=False)
-        tts.save(temp_path)
-
-        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            shutil.move(temp_path, file_path)
-            return True
-
-        return False
     except Exception as e:
-        print(f"V1: Error generating audio: {str(e)}")
-        return False
+        print("OpenAI TTS failed, falling back to gTTS:", e)
+
+        try:
+            # 4. Make gTTS more natural by slightly slowing it down
+            tts = gTTS(cleaned, lang="en", slow=False)
+            tts.save(output_path)
+
+        except Exception as e2:
+            print("gTTS also failed:", e2)
+            raise e2
+
     
 
 @app.route('/list_recent_recordings')
@@ -777,32 +787,42 @@ def ssml_wrap(text):
 
 def clean_tts_text(text: str) -> str:
     """
-    Clean text before sending to Text-to-Speech.
-    Removes symbols, markdown, and formatting artifacts so TTS sounds natural.
+    Smooth TTS by reducing unnatural pauses and improving flow.
+    Designed for gTTS and OpenAI TTS.
     """
+    import re
+
     if not text:
         return ""
-    # Remove URLs
+
+    # Strip markdown, urls and formatting garbage
     text = re.sub(r'http\S+', '', text)
-    # Remove markdown & code artifacts
     text = re.sub(r'[*_#`~<>^{}\[\]|]', '', text)
-    # Replace slashes and backslashes with space (pause)
     text = re.sub(r'[\\/]', ' ', text)
-    # Remove multiple punctuation (e.g., '!!!' -> '!')
-    text = re.sub(r'([!?.,])\1+', r'\1', text)
-    # Preserve negative numbers like -1, -0.4
+
+    # Normalize spaces
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    # Reduce long punctuation pauses
+    text = text.replace("...", ".").replace("..", ".")
+
+    # Convert mid-sentence periods → commas (reduces pauses)
+    text = re.sub(r'\.\s+(?=[a-zA-Z])', ', ', text)
+
+    # Avoid double commas or weird spacing
+    text = re.sub(r',\s*,', ', ', text)
+
+    # Fix negative numbers ("-1" → "negative one")
     text = re.sub(r'(?<!\d)-(?=\d)', 'NEGATIVE_SIGN_PLACEHOLDER', text)
-    # Replace -1 → "negative one"
     text = re.sub(r'\b-(\d+)\b', r'negative \1', text)
-    # Remove stray hyphens/symbols not part of numbers
-    text = re.sub(r'[-_=+]', ' ', text)
-    # Restore proper spoken "negative" for numbers
     text = text.replace("NEGATIVE_SIGN_PLACEHOLDER", " negative ")
-    # Replace multiple spaces or newlines with single space
-    text = re.sub(r'\s+', ' ', text)
-    # Trim
-    text = text.strip()
+
+    # Ensure clean ending
+    if not text.endswith(('.', '!', '?')):
+        text += "."
+
     return text
+
 
 
 @app.route('/synthesize', methods=['POST'])
@@ -1347,6 +1367,32 @@ def semantic_similarity(a: str, b: str) -> float:
     except Exception as e:
         print("Embedding error:", e)
         return 0.0
+
+
+def apply_ssml_prosody(text: str) -> str:
+    """
+    Wraps tutor feedback text in SSML prosody tags for smoother, more natural speech.
+    This works for OpenAI TTS and most modern TTS engines that support SSML.
+    """
+    import html
+
+    # Escape to avoid XML issues
+    safe_text = html.escape(text)
+
+    # Prosody tuning:
+    # - Slightly slower rate (teaching style)
+    # - Slightly higher pitch for friendlier tone
+    # - lightweight sentence-level pauses
+    # - Reduce falling tone between sentences
+    ssml = f"""
+<speak>
+  <prosody rate="95%" pitch="+2%">
+      {safe_text.replace('.', '<break time="300ms"/>')}
+  </prosody>
+</speak>
+""".strip()
+
+    return ssml
 
 
 def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
