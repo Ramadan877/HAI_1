@@ -516,46 +516,61 @@ def get_audio_filename(prefix, participant_id, interaction_number, extension='.m
 def generate_audio(text, output_path):
     """
     Generate natural tutor speech:
-    - Clean text for TTS
-    - Apply prosody (SSML)
-    - Use OpenAI TTS or fallback to gTTS
+    - Adds a hyped / energetic speaking style
+    - Uses OpenAI TTS with SSML/voice tuning
+    - Falls back to gTTS if needed
     """
 
     import openai
     from gtts import gTTS
     import os
 
-    # 1. Clean text (remove markup, reduce pauses)
+    # -----------------------------
+    # 1. Clean text for TTS
+    # -----------------------------
     cleaned = clean_tts_text(text)
 
-    # 2. Add SSML prosody tuning
-    ssml_text = apply_ssml_prosody(cleaned)
+    # -----------------------------
+    # 2. HYPED STYLE WRAPPER
+    # -----------------------------
+    hyped_text = (
+        "Speak in an enthusiastic, upbeat, energetic tone full of positivity, "
+        "like a very excited friendly tutor. Now say this:\n" + cleaned
+    )
+
+    # SSML prosody (smooths pacing)
+    ssml_text = apply_ssml_prosody(hyped_text)
 
     try:
-        # 3. OpenAI TTS with SSML
+        # -----------------------------
+        # 3. OpenAI TTS 
+        # -----------------------------
         response = openai.audio.speech.create(
             model="gpt-4o-mini-tts",
-            voice="sol",
+            voice="sol",          
             input=ssml_text,
             format="mp3"
         )
         audio_bytes = response.read()
+
         with open(output_path, "wb") as f:
             f.write(audio_bytes)
-        return
+        return True
 
     except Exception as e:
         print("OpenAI TTS failed, falling back to gTTS:", e)
 
         try:
-            # 4. Make gTTS more natural by slightly slowing it down
+            # -----------------------------
+            # 4. Fallback gTTS (less hype)
+            # -----------------------------
             tts = gTTS(cleaned, lang="en", slow=False)
             tts.save(output_path)
+            return True
 
         except Exception as e2:
             print("gTTS also failed:", e2)
-            raise e2
-
+            return False
     
 
 @app.route('/list_recent_recordings')
@@ -705,7 +720,7 @@ def stream_submit_message_v1():
             return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
 
         # ----------------------------------------------
-        # USE YOUR TUTOR LOGIC (V2 ENGINE)
+        # TUTOR LOGIC (V2 ENGINE)
         # ----------------------------------------------
         response_text = generate_response(
             user_message=user_transcript,
@@ -1155,19 +1170,16 @@ def submit_message():
                     f"Let’s move on to the next one."
                 )
 
-            # logging
             log_interaction("User", concept_name, user_transcript)
             log_interaction("AI", concept_name, response)
             log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count)
             log_interaction_to_db_only("AI", concept_name, response, attempt_count)
 
-            # save audio
             folders = get_participant_folder(participant_id, trial_type)
             ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
             ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
             generate_audio(response, ai_audio_path)
 
-            # update convo memory
             conv_store.setdefault(concept_name, []).append(f"User: {user_transcript}")
             conv_store[concept_name].append(f"AI: {response}")
             session['conversation_history'] = conv_store
@@ -1203,7 +1215,7 @@ def submit_message():
         sim = SequenceMatcher(None, norm(user_transcript), norm(golden_answer)).ratio()
 
         if sim >= 0.80:
-            new_attempt = 3     # mark as complete
+            new_attempt = 3     
         else:
             new_attempt = min(attempt_count + 1, 3)
 
