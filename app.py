@@ -515,55 +515,75 @@ def get_audio_filename(prefix, participant_id, interaction_number, extension='.m
 
 def generate_audio(text, output_path):
     """
-    Generate natural tutor speech:
-    - Adds a hyped / energetic speaking style
-    - Uses OpenAI TTS with SSML/voice tuning
-    - Falls back to gTTS if needed
+    Generate energetic, hyped tutor speech using SOL voice with SSML prosody.
+    Falls back to gTTS if needed.
     """
 
     import openai
     from gtts import gTTS
     import os
+    import html
 
-    # -----------------------------
-    # 1. Clean text for TTS
-    # -----------------------------
+    # ----------------------------------------
+    # Helper: Strong energetic SSML wrapper
+    # ----------------------------------------
+    def wrap_hyped_sol_ssml(raw_text):
+        safe = html.escape(raw_text)
+        return f"""
+<speak>
+  <prosody pitch="+15%" rate="108%">
+      <emphasis level="strong">
+          {safe}
+      </emphasis>
+  </prosody>
+</speak>
+""".strip()
+
+    # ----------------------------------------
+    # 1. Clean incoming text
+    # ----------------------------------------
     cleaned = clean_tts_text(text)
 
-    # -----------------------------
-    # 2. HYPED STYLE WRAPPER
-    # -----------------------------
+    # ----------------------------------------
+    # 2. Add “hyped tutor” instructions 
+    #    (this shapes the semantic personality)
+    # ----------------------------------------
     hyped_text = (
-        "Speak in an enthusiastic, upbeat, energetic tone full of positivity, "
-        "like a very excited friendly tutor. Now say this:\n" + cleaned
+        "Speak in an enthusiastic, energetic, upbeat, friendly tutor voice with positive energy. "
+        "Keep your pacing smooth and natural without long pauses. Now say this: "
+        + cleaned
     )
 
-    # SSML prosody (smooths pacing)
-    ssml_text = apply_ssml_prosody(hyped_text)
+    # ----------------------------------------
+    # 3. Build SSML for SOL
+    # ----------------------------------------
+    ssml_text = wrap_hyped_sol_ssml(hyped_text)
 
     try:
-        # -----------------------------
-        # 3. OpenAI TTS 
-        # -----------------------------
+        # ----------------------------------------
+        # 4. OpenAI TTS (SOL voice)
+        # ----------------------------------------
         response = openai.audio.speech.create(
             model="gpt-4o-mini-tts",
-            voice="sol",          
+            voice="sol",
             input=ssml_text,
             format="mp3"
         )
+
         audio_bytes = response.read()
 
         with open(output_path, "wb") as f:
             f.write(audio_bytes)
+
         return True
 
     except Exception as e:
         print("OpenAI TTS failed, falling back to gTTS:", e)
 
         try:
-            # -----------------------------
-            # 4. Fallback gTTS (less hype)
-            # -----------------------------
+            # ----------------------------------------
+            # 5. Fallback TTS
+            # ----------------------------------------
             tts = gTTS(cleaned, lang="en", slow=False)
             tts.save(output_path)
             return True
@@ -571,7 +591,7 @@ def generate_audio(text, output_path):
         except Exception as e2:
             print("gTTS also failed:", e2)
             return False
-    
+
 
 @app.route('/list_recent_recordings')
 def list_recent_recordings():
