@@ -3068,16 +3068,9 @@ def submit_message():
 
         is_similar_enough = (sim >= 0.8)
 
-        if is_similar_enough:
-            attempt_count = 3
-        else:
-            if attempt_count < 3:
-                attempt_count += 1
-
-
-
-        concept_attempts[concept_name] = attempt_count
-        session['concept_attempts'] = concept_attempts
+        # Use the current stored attempt_count when generating feedback so
+        # that 0 => first attempt, 1 => second attempt, 2 => third attempt.
+        current_attempt_for_response = attempt_count
 
         # ------------------------------
         #  GENERATE AI RESPONSE  *ONLY ONCE*
@@ -3086,9 +3079,19 @@ def submit_message():
             user_transcript,
             concept_name,
             golden_answer,
-            attempt_count,
+            current_attempt_for_response,
             session.get('conversation_history', {}).get(concept_name, [])
         )
+
+        # After generating the response, update and persist the attempt count.
+        if is_similar_enough:
+            attempt_count = 3
+        else:
+            if attempt_count < 3:
+                attempt_count += 1
+
+        concept_attempts[concept_name] = attempt_count
+        session['concept_attempts'] = concept_attempts
 
         # ------------------------------
         #  SAVE HISTORY
