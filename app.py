@@ -3292,13 +3292,14 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     elif attempt_count == 1:
         user_prompt = (
             "This is the student's SECOND attempt. If still incomplete, point out the missing elements "
-            "or misconception again in the form of a question, a little bit more clear than the previous attempt but DO NOT reveal the correct answer yet. Encourage them for one last try."
+            "or misconception again in the form of a question, but DO NOT reveal the correct answer yet. Encourage them for one last try."
         )
     elif attempt_count == 2:
         user_prompt = (
-            "This is the student's THIRD and FINAL attempt. "
-            "If correct, confirm and tell them to move to the next concept. "
-            "If still incorrect, now briefly provide the correct explanation (Golden Answer) and guide them to move on."
+            "This is the student's THIRD and FINAL attempt."
+            "If the explanation is still incorrect, NOW you must provide the correct golden answer clearly and explicitly."
+            "Before this attempt, you were forbidden from giving it."
+            "After providing the correct answer, tell the student to move on to the next concept."
         )
     else:
         user_prompt = (
