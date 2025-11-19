@@ -3096,8 +3096,6 @@ def submit_message():
             pre_similarity = 0.0
 
         is_similar_enough = (pre_similarity >= 0.8)
-
-        response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
         
         if 'conversation_history' not in session:
             session['conversation_history'] = {}
@@ -3252,7 +3250,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         If incorrect → provide the correct golden answer and tell them to move on.
     4. Your tone should always be:
     - Natural, human-like
-    - Brief (max 3 short sentences)
+    - Brief (max 2 short sentences)
     - Supportive but not overly enthusiastic
     - Never robotic or templated
     5. Never fabricate that the student "mentioned X" unless they actually did.  
@@ -3289,9 +3287,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
             "Acknowledge their effort and tell them to move to the next concept."
         )
 
-    # Heuristic: only ask to repeat in English when the user's input contains
-    # a substantial proportion of non-Latin characters. This avoids false
-    # positives for accented, noisy, or partially-transcribed English.
+
     non_english_re = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]")
 
     def detect_mostly_non_latin(text, threshold=0.35, min_non_latin=3):
@@ -3301,7 +3297,6 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         English transcripts."""
         if not text or not isinstance(text, str):
             return False
-        # Short answers shouldn't be forced to repeat unless clearly non-latin
         if len(text.strip()) <= 3:
             return bool(non_english_re.search(text)) and len(non_english_re.findall(text)) >= min_non_latin
 
