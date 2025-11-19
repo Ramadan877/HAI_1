@@ -3197,17 +3197,16 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
             "You can now move on to the next concept."
         )
 
-    # Base system instructions
+    # ==== Base prompt ====
     base_prompt = f"""
     Context: {concept_name}
-    Golden Answer (only revealed at attempt 3 if still incorrect): {golden_answer}
+    Golden Answer: {golden_answer}
     Student Explanation: {user_message}
     {history_context}
 
     You are a concise, friendly tutor guiding the student to self-explain a concept.
     The tone should be warm, motivating, and professional — not overly enthusiastic or verbose.
 
-    
     Your goals:
     1. Understand what the student actually said. This includes:
     - A real attempt at explanation
@@ -3233,7 +3232,8 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     Use their real wording authentically.
 
     Guidelines:
-    - Keep responses under 2 short sentences.
+    - Keep responses to AT MOST 2 short sentences.
+    - Aim for 25–40 words maximum in total.
     - Acknowledge correct parts briefly; do not overpraise.
     - Never reveal the golden answer before the third attempt.
     - Use plain English, no emojis, no lists, no unnecessary filler.
