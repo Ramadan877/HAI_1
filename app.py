@@ -3068,15 +3068,13 @@ def submit_message():
 
         is_similar_enough = (sim >= 0.8)
 
-        # ------------------------------
-        #  UPDATE ATTEMPT COUNT ***
-        # ------------------------------
         if is_similar_enough:
             attempt_count = 3
         else:
-            if attempt_count < 2:
+            if attempt_count < 3:
                 attempt_count += 1
-            # attempt_count stays max 2 here; attempt 3 only for correct or after next try
+
+
 
         concept_attempts[concept_name] = attempt_count
         session['concept_attempts'] = concept_attempts
@@ -3148,167 +3146,6 @@ def submit_message():
         print("Error in submit_message:", e)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-
-# @app.route('/submit_message', methods=['POST'])
-# def submit_message():
-#     """Handle user message submission and generate AI response."""
-#     try:
-#         participant_id = session.get('participant_id')
-#         trial_type = session.get('trial_type')
-        
-#         if not participant_id or not trial_type:
-#             return jsonify({
-#                 'status': 'error',
-#                 'message': 'Participant ID or trial type not found in session'
-#             }), 400
-
-#         concept_name = request.form.get('concept_name', '').strip()
-#         print(f"Received concept from frontend: {concept_name}")  # Debug print
-
-#         concepts = load_concepts()
-#         print(f"Available concepts: {list(concepts.keys())}")  # Debug print
-        
-#         concept_found = False
-#         for concept in concepts:
-#             if concept.lower() == concept_name.lower():
-#                 concept_name = concept  
-#                 concept_found = True
-#                 print(f"Found matching concept: {concept}")  # Debug print
-#                 break
-
-#         if not concept_found:
-#             print(f"Error: Concept '{concept_name}' not found in system!")
-#             return jsonify({
-#                 'status': 'error',
-#                 'message': 'Concept not found'
-#             }), 400
-
-#         golden_answer = concepts[concept_name]['golden_answer']
-        
-#         concept_attempts = session.get('concept_attempts', {})
-#         attempt_count = concept_attempts.get(concept_name, 0)
-
-#         conv_store = session.get('conversation_history')
-#         if conv_store is None or isinstance(conv_store, dict):
-#             conversation_history = (conv_store or {}).get(concept_name, [])
-#         else:
-#             print(f"Warning: session['conversation_history'] has unexpected type {type(conv_store)}, resetting to dict")
-#             session['conversation_history'] = {}
-#             conversation_history = []
-        
-#         if 'audio' in request.files:
-#             audio_file = request.files['audio']
-#             if audio_file:
-#                 audio_filename = get_audio_filename('user', participant_id, attempt_count + 1)
-#                 folders = get_participant_folder(participant_id, trial_type)
-#                 audio_path = os.path.join(folders['participant_folder'], audio_filename)
-#                 audio_file.save(audio_path)
-                
-#                 try:
-#                     with open(audio_path, "rb") as audio_file:
-#                         user_transcript = openai.Audio.transcribe(
-#                             model="whisper-1",
-#                             file=audio_file
-#                         )["text"]
-#                 except Exception as e:
-#                     print(f"OpenAI transcription failed, falling back to local model: {str(e)}")
-#                     user_transcript = speech_to_text(audio_path)
-                
-#                 if not user_transcript:
-#                     return jsonify({
-#                         'status': 'error',
-#                         'message': 'Failed to transcribe audio'
-#                     }), 400
-
-#         def _normalize_for_check(text):
-#             import re
-#             return re.sub(r'[^a-z0-9\s]', '', (text or '').lower().strip())
-
-#         try:
-#             user_norm_check = _normalize_for_check(user_transcript)
-#             golden_norm_check = _normalize_for_check(golden_answer)
-#             pre_similarity = SequenceMatcher(None, user_norm_check, golden_norm_check).ratio()
-#         except Exception:
-#             pre_similarity = 0.0
-
-#         is_similar_enough = (pre_similarity >= 0.8)
-
-#         # response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
-        
-#         if 'conversation_history' not in session:
-#             session['conversation_history'] = {}
-#         if concept_name not in session['conversation_history']:
-#             session['conversation_history'][concept_name] = []
-        
-#         session['conversation_history'][concept_name].append(f"User: {user_transcript}")
-#         session['conversation_history'][concept_name].append(f"AI: {response}")
-        
-#         if len(session['conversation_history'][concept_name]) > 10:
-#             session['conversation_history'][concept_name] = session['conversation_history'][concept_name][-10:]
-        
-#         session.modified = True
-
-#         if is_similar_enough:
-#             attempt_count = 3
-#         else:
-#             if attempt_count < 2:
-#                 attempt_count += 1
-
-#         concept_attempts[concept_name] = attempt_count
-#         session['concept_attempts'] = concept_attempts
-
-#         response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
-
-
-#         ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
-#         ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
-
-#         if generate_audio(response, ai_audio_path):
-#             log_interaction("User", concept_name, user_transcript)
-#             log_interaction("AI", concept_name, response)
-
-#             log_interaction_to_db_only("USER", concept_name, user_transcript, attempt_count + 1)
-#             log_interaction_to_db_only("AI", concept_name, response, attempt_count + 1)
-
-#             session_id = session.get('session_id')
-#             if session_id:
-#                 with open(audio_path, 'rb') as f:
-#                     audio_data = f.read()
-#                 save_audio_with_cloud_backup(
-#                     audio_data, audio_filename, session_id,
-#                     'user_audio', concept_name, attempt_count + 1
-#                 )
-
-#                 with open(ai_audio_path, 'rb') as f:
-#                     ai_audio_data = f.read()
-#                 save_audio_with_cloud_backup(
-#                     ai_audio_data, ai_audio_filename, session_id,
-#                     'ai_audio', concept_name, attempt_count + 1
-#                 )
-
-#             returned_attempt = session['concept_attempts'].get(concept_name, attempt_count + 1)
-#             should_move_flag = (returned_attempt >= 3)
-
-#             return jsonify({
-#                 'status': 'success',
-#                 'response': response,
-#                 'user_transcript': user_transcript,
-#                 'ai_audio_url': ai_audio_filename,
-#                 'attempt_count': returned_attempt,
-#                 'should_move_to_next': should_move_flag
-#             })
-#         else:
-#             return jsonify({
-#                 'status': 'error',
-#                 'message': 'Failed to generate AI audio response'
-#             }), 500
-            
-#     except Exception as e:
-#         print(f"Error in submit_message: {str(e)}")
-#         return jsonify({
-#             'status': 'error',
-#             'message': str(e)
-#         }), 500
 
 def generate_response(user_message, concept_name, golden_answer, attempt_count, conversation_history=None):
     """Generate concise, supportive, and pedagogically effective feedback for 3 attempts with natural flow."""
@@ -3389,14 +3226,14 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         If incorrect → provide the correct golden answer and tell them to move on.
     4. Your tone should always be:
     - Natural, human-like
-    - Brief (max 3 short sentences)
+    - Brief (max 2 short sentences)
     - Supportive but not overly enthusiastic
     - Never robotic or templated
     5. Never fabricate that the student "mentioned X" unless they actually did.  
     Use their real wording authentically.
 
     Guidelines:
-    - Keep responses under 3 short sentences.
+    - Keep responses under 2 short sentences.
     - Acknowledge correct parts briefly; do not overpraise.
     - Never reveal the golden answer before the third attempt.
     - Use plain English, no emojis, no lists, no unnecessary filler.
@@ -3455,12 +3292,18 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     enforcement_system = (
         "Respond only in English. "
         "If the student's input is not in English, ask politely in English to repeat it in English."
-    )
+        )
+
+    length_rule = (
+        "IMPORTANT: Your entire response must be at most 2 short sentences "
+        "and no more than 40 words in total. Do not exceed this length."
+        )
 
     messages = [
         {"role": "system", "content": enforcement_system},
         {"role": "system", "content": base_prompt},
-        {"role": "user", "content": user_prompt}
+        {"role": "user", "content": user_prompt},
+        {"role": "system", "content": length_rule},
     ]
 
     try:
