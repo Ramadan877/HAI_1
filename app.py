@@ -2022,7 +2022,6 @@
 
 
 
-
 from flask import Flask, request, render_template, jsonify, session, send_from_directory, Response, stream_with_context
 from werkzeug.utils import secure_filename
 from flask_cors import CORS 
@@ -2648,8 +2647,7 @@ def stream_submit_message_v1():
         def generate():
             try:
                 stream_resp = openai.ChatCompletion.create(
-                    # model='gpt-4o-mini',
-                    model='gpt-4o',
+                    model='gpt-4o-mini',
                     messages=messages,
                     max_tokens=250,
                     temperature=0.4,
@@ -3099,30 +3097,20 @@ def submit_message():
 
         is_similar_enough = (pre_similarity >= 0.8)
 
-        # response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
+        response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
         
-        # if 'conversation_history' not in session:
-        #     session['conversation_history'] = {}
-        # if concept_name not in session['conversation_history']:
-        #     session['conversation_history'][concept_name] = []
+        if 'conversation_history' not in session:
+            session['conversation_history'] = {}
+        if concept_name not in session['conversation_history']:
+            session['conversation_history'][concept_name] = []
         
-        # session['conversation_history'][concept_name].append(f"User: {user_transcript}")
-        # session['conversation_history'][concept_name].append(f"AI: {response}")
+        session['conversation_history'][concept_name].append(f"User: {user_transcript}")
+        session['conversation_history'][concept_name].append(f"AI: {response}")
         
-        # if len(session['conversation_history'][concept_name]) > 10:
-        #     session['conversation_history'][concept_name] = session['conversation_history'][concept_name][-10:]
+        if len(session['conversation_history'][concept_name]) > 10:
+            session['conversation_history'][concept_name] = session['conversation_history'][concept_name][-10:]
         
-        # session.modified = True
-
-        # if is_similar_enough:
-        #     attempt_count = 3
-        # else:
-        #     attempt_count = min(attempt_count + 1, 3)
-
-        # concept_attempts[concept_name] = attempt_count
-        # session['concept_attempts'] = concept_attempts
-
-        # response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
+        session.modified = True
 
         if is_similar_enough:
             attempt_count = 3
@@ -3132,14 +3120,8 @@ def submit_message():
         concept_attempts[concept_name] = attempt_count
         session['concept_attempts'] = concept_attempts
 
-        # now generate AI response ONCE with correct attempt number
-        response = generate_response(
-            user_transcript,
-            concept_name,
-            golden_answer,
-            attempt_count,
-            conversation_history
-        )
+        response = generate_response(user_transcript, concept_name, golden_answer, attempt_count, conversation_history)
+
 
         ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count + 1)
         ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
@@ -3277,7 +3259,8 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     Use their real wording authentically.
 
     Guidelines:
-    - Keep responses under 3 short sentences.
+    - Keep responses to AT MOST 2 short sentences.
+    - Aim for 25–40 words maximum in total.
     - Acknowledge correct parts briefly; do not overpraise.
     - Never reveal the golden answer before the third attempt.
     - Use plain English, no emojis, no lists, no unnecessary filler.
@@ -3292,14 +3275,13 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     elif attempt_count == 1:
         user_prompt = (
             "This is the student's SECOND attempt. If still incomplete, point out the missing elements "
-            "or misconception again in the form of a question, but DO NOT reveal the correct answer yet. Encourage them for one last try."
+            "or misconception again in the form of a question, a little bit more clear than the previous attempt but DO NOT reveal the correct answer yet. Encourage them for one last try."
         )
     elif attempt_count == 2:
         user_prompt = (
-            "This is the student's THIRD and FINAL attempt."
-            "If the explanation is still incorrect, NOW you must provide the correct golden answer clearly and explicitly."
-            "Before this attempt, you were forbidden from giving it."
-            "After providing the correct answer, tell the student to move on to the next concept."
+            "This is the student's THIRD and FINAL attempt. "
+            "If correct, confirm and tell them to move to the next concept. "
+            "If still incorrect, now briefly provide the correct explanation (Golden Answer) and guide them to move on."
         )
     else:
         user_prompt = (
@@ -3339,21 +3321,23 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         "If the student's input is not in English, ask politely in English to repeat it in English."
     )
 
+    length_rule = (
+        "IMPORTANT: Your entire response must be at most 2 short sentences "
+        "and no more than 40 words in total. Do not exceed this length."
+    )
+
     messages = [
         {"role": "system", "content": enforcement_system},
         {"role": "system", "content": base_prompt},
+        {"role": "system", "content": length_rule},
         {"role": "user", "content": user_prompt}
     ]
 
     try:
         response = openai.ChatCompletion.create(
-            # model="gpt-4o-mini",
-            # messages=messages,
-            # max_tokens=80,
-            # temperature=0.4,
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=messages,
-            max_tokens=200,
+            max_tokens=80,
             temperature=0.4,
         )
         ai_response = response.choices[0].message.content.strip()
@@ -4050,5 +4034,22 @@ if __name__ == '__main__':
     startup_interaction_id = get_interaction_id()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
