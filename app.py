@@ -3055,18 +3055,64 @@ def submit_message():
                     return jsonify({'status': 'error', 'message': 'Failed to transcribe audio'}), 400
 
         # ---------------
-        #  SIMILARITY CHECK
+        #  SIMILARITY CHECK (improved)
         # ---------------
-        def _norm(t):
+        def compute_similarity(a, b):
+            """Compute a combined similarity score between two texts.
+
+            Uses token-level Jaccard (after stopword removal) and
+            SequenceMatcher character ratio. Returns weighted score in [0,1].
+            """
             import re
-            return re.sub(r'[^a-z0-9\s]', '', (t or '').lower())
+            from difflib import SequenceMatcher as _SM
+
+            def normalize(text):
+                t = (text or '').lower()
+                t = re.sub(r"[^a-z0-9\s]", ' ', t)
+                t = re.sub(r"\s+", ' ', t).strip()
+                return t
+
+            stopwords = {
+                'the','is','a','an','and','or','of','in','to','for','on','with','that','this','it',
+                'as','are','be','by','at','from','which','was','were','has','have','but','not'
+            }
+
+            na = normalize(a)
+            nb = normalize(b)
+
+            if not na or not nb:
+                return 0.0
+
+            tokens_a = [w for w in na.split() if w and w not in stopwords]
+            tokens_b = [w for w in nb.split() if w and w not in stopwords]
+
+            set_a = set(tokens_a)
+            set_b = set(tokens_b)
+
+            # token-level Jaccard
+            try:
+                jaccard = float(len(set_a & set_b)) / float(len(set_a | set_b)) if (set_a | set_b) else 0.0
+            except Exception:
+                jaccard = 0.0
+
+            # character-level sequence matcher
+            try:
+                seq = _SM(None, na, nb).ratio()
+            except Exception:
+                seq = 0.0
+
+            # weighted combination (tunable)
+            score = 0.65 * jaccard + 0.35 * seq
+            return score
 
         try:
-            sim = SequenceMatcher(None, _norm(user_transcript), _norm(golden_answer)).ratio()
-        except:
+            sim = compute_similarity(user_transcript, golden_answer)
+        except Exception:
             sim = 0.0
 
-        is_similar_enough = (sim >= 0.8)
+        # threshold tuned to be permissive for paraphrases; adjust if needed
+        SIMILARITY_THRESHOLD = 0.55
+        is_similar_enough = (sim >= SIMILARITY_THRESHOLD)
 
         # Use the current stored attempt_count when generating feedback so
         # that 0 => first attempt, 1 => second attempt, 2 => third attempt.
@@ -3224,7 +3270,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     - Attempt 1: Give very general guidance or a hint. No revealing the answer.
     - Attempt 2: Point out the missing element more clearly. No revealing the answer.
     - Attempt 3: 
-        If correct → confirm and tell them to move on.
+        If correct → confirm, provide the correct golden answer and tell them to move on.
         If incorrect → provide the correct golden answer and tell them to move on.
     4. Your tone should always be:
     - Natural, human-like
@@ -3256,7 +3302,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
     elif attempt_count == 2:
         user_prompt = (
             "This is the student's THIRD and FINAL attempt. "
-            "If correct, confirm and tell them to move to the next concept. "
+            "If correct, confirm, provide the correct golden answer and tell them to move to the next concept. "
             "If still incorrect, now briefly provide the correct explanation (Golden Answer) and guide them to move on."
         )
     else:
@@ -3277,7 +3323,6 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
         English transcripts."""
         if not text or not isinstance(text, str):
             return False
-        # Short answers shouldn't be forced to repeat unless clearly non-latin
         if len(text.strip()) <= 3:
             return bool(non_english_re.search(text)) and len(non_english_re.findall(text)) >= min_non_latin
 
