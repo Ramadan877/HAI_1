@@ -1,3 +1,4 @@
+# Version 1
 from flask import Flask, request, render_template, jsonify, session, send_from_directory, Response, stream_with_context
 from werkzeug.utils import secure_filename
 from flask_cors import CORS 
@@ -58,8 +59,6 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)  
 
-init_supabase()
-
 try:
     from flask_compress import Compress
     Compress(app)
@@ -78,10 +77,6 @@ app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB limit for long rec
 
 db.init_app(app)
 
-with app.app_context():
-    db.create_all()
-    init_supabase()
-
 import logging
 
 logger = logging.getLogger(__name__)
@@ -98,8 +93,11 @@ SUPABASE_BUCKET = os.environ.get('SUPABASE_BUCKET', 'uploads')
 def init_supabase():
     global supabase_client
 
+    # Fallback: if logger isn't created yet, use print
+    log = logger if "logger" in globals() else None
+
     if supabase_client is not None:
-        logger.info("Supabase client already initialized.")
+        if log: log.info("Supabase client already initialized.")
         return
 
     url = (
@@ -110,22 +108,28 @@ def init_supabase():
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
     if not url:
-        logger.error("Supabase init FAILED: SUPABASE_URL or SUPABASE_DATABASE_URL not set.")
+        if log: log.error("Supabase init FAILED: missing SUPABASE_URL or SUPABASE_DATABASE_URL.")
         return
 
     if not key:
-        logger.error("Supabase init FAILED: SUPABASE_SERVICE_ROLE_KEY not set.")
+        if log: log.error("Supabase init FAILED: SUPABASE_SERVICE_ROLE_KEY not set.")
         return
 
     if create_supabase_client is None:
-        logger.error("Supabase library not available.")
+        if log: log.error("Supabase library missing.")
         return
 
     try:
         supabase_client = create_supabase_client(url, key)
-        logger.info(f"Supabase initialized successfully with URL: {url}")
+        if log:
+            log.info(f"Supabase initialized successfully: {url}")
+        return supabase_client 
     except Exception as e:
-        logger.exception(f"Supabase init error: {e}")
+        if log:
+            log.exception(f"Supabase init error: {e}")
+        else:
+            print(f"Supabase init error: {e}")
+        return None
 
 
 def upload_file_to_supabase(local_path, dest_path=None, content_type=None):
@@ -155,6 +159,12 @@ def upload_file_to_supabase(local_path, dest_path=None, content_type=None):
     except Exception as e:
         logger.exception("Error during file upload to Supabase: %s", e)
         return None
+
+
+with app.app_context():
+    db.create_all()
+    init_supabase()
+
 
 def save_interaction_to_db(session_id, speaker, concept_name, message, attempt_number=1):
     """Save interaction to database."""
@@ -2059,13 +2069,10 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         init_supabase()
-        
-    startup_interaction_id = get_interaction_id()
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
 
     startup_interaction_id = get_interaction_id()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
 
 
