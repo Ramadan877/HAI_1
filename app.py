@@ -2646,6 +2646,35 @@ def synthesize_with_openai(text, voice='alloy', fmt='mp3'):
     return audio_bytes, content_type
 
 
+def sanitize_stream_token(token: str) -> str:
+    """
+    Remove unwanted filler tokens that sometimes appear during streaming.
+    This preserves normal functionality, grammar, and meaning.
+    """
+    if not token:
+        return ""
+
+    forbidden = {
+        "speak", "Speak",
+        "pause", "Pause",
+        "continue", "Continue",
+        "<speak>", "</speak>",
+        "<voice>", "</voice>",
+        "<break>", "</break>",
+        "<prosody>", "</prosody>",
+    }
+
+    # Remove exact unwanted tokens
+    if token.strip() in forbidden:
+        return ""
+
+    # Remove tiny fragments like "sp", "pa", "spea", "cont…"
+    if len(token.strip()) <= 3 and re.fullmatch(r"[a-zA-Z]+", token.strip()):
+        return ""
+
+    return token
+
+
 @app.route('/stream_submit_message', methods=['POST'])
 def stream_submit_message_v1():
     """Streaming variant for V1: streams partial text tokens to the client."""
@@ -2722,7 +2751,9 @@ def stream_submit_message_v1():
                         delta = ch.get("delta", {})
 
                         # FIXED TOKEN EXTRACTION
-                        token = delta.get("content") or delta.get("text") or ""
+                        token = sanitize_stream_token(
+                                    delta.get("content") or delta.get("text") or ""
+                                )
 
                     except Exception:
                         token = ""
