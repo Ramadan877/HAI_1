@@ -2740,9 +2740,9 @@ def stream_submit_message_v1():
                 try:
                     concept_attempts = session.get('concept_attempts', {})
                     attempt_count = concept_attempts.get(concept_name, 0)
-                    attempt_count += 1
+                    # attempt_count += 1
                     concept_attempts[concept_name] = attempt_count
-                    session['concept_attempts'] = concept_attempts
+                    # session['concept_attempts'] = concept_attempts
 
                     folders = get_participant_folder(participant_id, trial_type)
                     ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
@@ -2937,7 +2937,7 @@ def set_context():
     
     if 'concept_attempts' not in session:
         session['concept_attempts'] = {}
-    session['concept_attempts'][concept_name] = 0
+    # session['concept_attempts'][concept_name] = 0
     session.modified = True
 
     log_interaction("SYSTEM", selected_concept["name"], 
@@ -2955,7 +2955,7 @@ def change_concept():
     
     if 'concept_attempts' not in session:
         session['concept_attempts'] = {}
-    session['concept_attempts'][concept_name] = 0
+    # session['concept_attempts'][concept_name] = 0
     session.modified = True
     
     print(f"Concept changed to: {concept_name}")
@@ -3119,8 +3119,11 @@ def submit_message():
         # ------------------------------
         #  GET CURRENT ATTEMPT COUNT
         # ------------------------------
-        concept_attempts = session.get('concept_attempts', {})
+        # concept_attempts = session.get('concept_attempts', {})
+        # attempt_count = concept_attempts.get(concept_name, 0)
+        concept_attempts = session.setdefault('concept_attempts', {})
         attempt_count = concept_attempts.get(concept_name, 0)
+        original_attempt = attempt_count
 
         # ------------------------------
         #  PROCESS AUDIO OR TEXT INPUT
@@ -3209,7 +3212,8 @@ def submit_message():
 
         # Use the current stored attempt_count when generating feedback so
         # that 0 => first attempt, 1 => second attempt, 2 => third attempt.
-        current_attempt_for_response = attempt_count
+        # current_attempt_for_response = attempt_count
+        current_attempt_for_response = original_attempt
 
         # ------------------------------
         #  GENERATE AI RESPONSE  *ONLY ONCE*
@@ -3223,14 +3227,21 @@ def submit_message():
         )
 
         # After generating the response, update and persist the attempt count.
+        # if is_similar_enough:
+        #     attempt_count = 3
+        # else:
+        #     if attempt_count < 3:
+        #         attempt_count += 1
+
+        # concept_attempts[concept_name] = attempt_count
+        # session['concept_attempts'] = concept_attempts
         if is_similar_enough:
             attempt_count = 3
-        else:
-            if attempt_count < 3:
-                attempt_count += 1
+        elif attempt_count < 3:
+            attempt_count += 1
 
         concept_attempts[concept_name] = attempt_count
-        session['concept_attempts'] = concept_attempts
+        session.modified = True
 
         # ------------------------------
         #  SAVE HISTORY
@@ -3250,7 +3261,8 @@ def submit_message():
         #  GENERATE AUDIO
         # ------------------------------
         folders = get_participant_folder(participant_id, trial_type)
-        ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
+        # ai_audio_filename = get_audio_filename('ai', participant_id, attempt_count)
+        ai_audio_filename = get_audio_filename('ai', participant_id, original_attempt + 1)
         ai_audio_path = os.path.join(folders['participant_folder'], ai_audio_filename)
 
         if generate_audio(response, ai_audio_path):
