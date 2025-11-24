@@ -1138,16 +1138,24 @@ def submit_message():
                 seq = 0.0
 
             # weighted combination (tunable)
-            score = 0.45 * jaccard + 0.55 * seq
-            return score
+            # score = 0.25 * jaccard + 0.75 * seq
+            # return score
+            score = 0.25 * jaccard + 0.75 * seq
 
+            # bonus if user hits important concepts
+            keywords = {"cause", "effect", "relationship", "variable", "influence"}
+            if any(k in na for k in keywords):
+                score += 0.05
+
+            return min(score, 1.0)
+        
         try:
             sim = compute_similarity(user_transcript, golden_answer)
         except Exception:
             sim = 0.0
 
         # threshold tuned to be permissive for paraphrases; adjust if needed
-        SIMILARITY_THRESHOLD = 0.55
+        SIMILARITY_THRESHOLD = 0.45
         is_similar_enough = (sim >= SIMILARITY_THRESHOLD)
 
         current_attempt_for_response = original_attempt
@@ -1271,7 +1279,7 @@ def generate_response(user_message, concept_name, golden_answer, attempt_count, 
 
     similarity = max(char_ratio, word_ratio)
 
-    if similarity >= 0.65:
+    if similarity >= 0.55:
         return (
             "Excellent — your explanation is clear and accurate. "
             "You’ve captured the main idea correctly. "
