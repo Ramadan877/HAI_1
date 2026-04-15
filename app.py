@@ -79,67 +79,6 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
-# Enhanced logging and error handling for Supabase
-import logging
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-# Supabase client helpers (upload audio files to Supabase storage)
-try:
-    from supabase import create_client as create_supabase_client
-except Exception:
-    create_supabase_client = None
-
-supabase_client = None
-SUPABASE_BUCKET = os.environ.get('SUPABASE_BUCKET', 'uploads')
-
-def init_supabase():
-    global supabase_client
-    if supabase_client is not None:
-        logger.debug("Supabase client already initialized.")
-        return
-
-    url = os.environ.get('SUPABASE_URL') or os.environ.get('SUPABASE_DATABASE_URL')
-    key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY') or os.environ.get('SUPABASE_KEY') or os.environ.get('SUPABASE_ANON_KEY')
-    if not url or not key or create_supabase_client is None:
-        logger.error("Supabase configuration is incomplete. URL or key is missing.")
-        return
-
-    try:
-        supabase_client = create_supabase_client(url, key)
-        logger.info("Supabase client initialized successfully.")
-    except Exception as e:
-        logger.exception("Failed to initialize Supabase client: %s", e)
-
-def upload_file_to_supabase(local_path, dest_path=None, content_type=None):
-    """Upload local file to Supabase storage. Returns {'path','public_url','raw'} or None."""
-    try:
-        if supabase_client is None:
-            logger.warning("Supabase client is not initialized. Skipping upload.")
-            return None
-
-        bucket = SUPABASE_BUCKET
-        if not bucket:
-            logger.error("Supabase bucket name is not configured.")
-            return None
-
-        dest_path = dest_path or os.path.basename(local_path)
-        with open(local_path, 'rb') as file:
-            response = supabase_client.storage.from_(bucket).upload(dest_path, file, {'content-type': content_type})
-
-        if response.get('error'):
-            logger.error("Supabase upload failed: %s", response['error'])
-            return None
-
-        public_url = supabase_client.storage.from_(bucket).get_public_url(dest_path)
-        logger.info("File uploaded to Supabase: %s", public_url)
-        return {'path': dest_path, 'public_url': public_url, 'raw': response}
-
-    except Exception as e:
-        logger.exception("Error during file upload to Supabase: %s", e)
-        return None
-
 def save_interaction_to_db(session_id, speaker, concept_name, message, attempt_number=1):
     """Save interaction to database."""
     try:
@@ -215,9 +154,9 @@ def create_session_record(participant_id, trial_type, version):
         return None
 
 def save_audio_with_cloud_backup(audio_data, filename, session_id, recording_type, concept_name=None, attempt_number=None):
-    """Save audio locally, upload to Supabase (if configured), and record metadata in DB.
+    """Save audio locally and record metadata in DB.
 
-    Returns (local_path, supabase_result_or_None)
+    Returns (local_path, None)
     """
     try:
         local_path = os.path.join('uploads/', filename)
@@ -235,24 +174,11 @@ def save_audio_with_cloud_backup(audio_data, filename, session_id, recording_typ
         except Exception:
             file_size = None
 
-        supabase_result = None
         try:
-            dest = os.path.join(str(session_id or ''), filename).replace('\\', '/')
-            supabase_result = upload_file_to_supabase(local_path, dest_path=dest)
-        except Exception as e:
-            print(f"Supabase upload attempt failed: {e}")
-
-        db_file_path = None
-        if supabase_result and supabase_result.get('public_url'):
-            db_file_path = supabase_result.get('public_url')
-        elif supabase_result and supabase_result.get('path'):
-            db_file_path = f"{os.environ.get('SUPABASE_URL','')}/storage/v1/object/public/{os.environ.get('SUPABASE_BUCKET', SUPABASE_BUCKET)}/{supabase_result.get('path')}"
-        else:
-            try:
-                rel = os.path.relpath(local_path, USER_AUDIO_FOLDER)
-            except Exception:
-                rel = local_path
-            db_file_path = rel
+            rel = os.path.relpath(local_path, USER_AUDIO_FOLDER)
+        except Exception:
+            rel = local_path
+        db_file_path = rel
 
         try:
             if session_id and os.environ.get('DATABASE_URL'):
@@ -268,7 +194,7 @@ def save_audio_with_cloud_backup(audio_data, filename, session_id, recording_typ
         except Exception as e:
             print(f"Failed to save recording metadata to DB: {e}")
 
-        return local_path, supabase_result
+        return local_path, None
     except Exception as e:
         print(f"Error in save_audio_with_cloud_backup: {str(e)}")
         return None, None
